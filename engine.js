@@ -146,24 +146,24 @@
     // Register der Buchungen im Zyklus (Formel in 'Konto jetzt'!B29)
     const m1 = eomonth(ZStart, -1) + 1, m2 = edate(m1, 1);
     const reg = [];
-    const push = (nd, name, a, src) => {
+    const push = (nd, name, a, src, obj) => {
       const d = nextWorkday(nd);
-      reg.push({ d, nd, name, a, src, status: d <= KDatum ? 'erledigt' : 'offen', verschoben: d !== nd, ok: a !== 0 && d >= ZStart && d < ZEnde });
+      reg.push({ d, nd, name, a, src, kat: obj.kat || null, ref: obj.id, status: d <= KDatum ? 'erledigt' : 'offen', verschoben: d !== nd, ok: a !== 0 && d >= ZStart && d < ZEnde });
     };
     for (const m of [m1, m2]) for (const x of P.kosten) {
       if (x.ueber !== 'Girokonto' || x.typ === 'Variabel') continue;
-      push(dayIn(m, num(x.tag) || 1), x.bez, -kostenIm(x, m), 'kosten');
+      push(dayIn(m, num(x.tag) || 1), x.bez, -kostenIm(x, m), 'kosten', x);
     }
     for (const m of [m1, m2]) for (const r of P.raten) {
       if (r.erste == null) continue;
       const rd = dayIn(m, ymd(D(r.naechste)).d);
-      push(rd, r.bez, -(num(r.rate) * (rd >= r.erste && rd <= r.letzte ? 1 : 0)), 'rate');
+      push(rd, r.bez, -(num(r.rate) * (rd >= r.erste && rd <= r.letzte ? 1 : 0)), 'rate', r);
     }
-    for (const m of [m1, m2]) for (const x of P.einnahmen) push(dayIn(m, num(x.tag) || 1), x.bez, einnIm(x, m), 'einnahme');
+    for (const m of [m1, m2]) for (const x of P.einnahmen) push(dayIn(m, num(x.tag) || 1), x.bez, einnIm(x, m), 'einnahme', x);
     const rows = reg.filter((r) => r.ok);
     for (const b of buchungen) {
       if (!num(b.betrag) || b.gebucht || b.dN < KDatum) continue;
-      rows.push({ d: b.dN, nd: b.dN, name: b.bez || (b.kat ? (budgets.find((x) => x.id === b.kat) || {}).bez : '') || 'vorgemerkt', a: -num(b.betrag), src: 'buchung', id: b.id, status: 'vorgemerkt', verschoben: false });
+      rows.push({ d: b.dN, nd: b.dN, name: b.bez || (b.kat ? (budgets.find((x) => x.id === b.kat) || {}).bez : '') || 'vorgemerkt', a: -num(b.betrag), src: 'buchung', id: b.id, kat: b.kat || null, status: 'vorgemerkt', verschoben: false });
     }
     rows.forEach((r, i) => (r.i = i));
     rows.sort((x, y) => x.d - y.d || x.a - y.a || x.i - y.i);

@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   const E = window.Engine;
+  const UI = window.UI;
   const { fmt, D, iso, ymd, som, edate } = E;
   const KEY = 'mtlkosten.v1';
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -57,14 +58,8 @@
     return s;
   }
 
-  // ---------- Icons ----------
-  const I = {
-    jetzt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18M7 15h4"/></svg>',
-    monat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 20V11M10 20V5M15 20v-7M20 20V8"/></svg>',
-    posten: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor"/></svg>',
-    mehr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="8" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="16" cy="12" r="1" fill="currentColor"/></svg>',
-    add: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
-  };
+  // ---------- Tabbar-Icons ----------
+  const I = { jetzt: UI.svg('wallet'), monat: UI.svg('chart'), posten: UI.svg('list'), mehr: UI.svg('gear'), add: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>' };
 
   // ---------- Rendering ----------
   function render() {
@@ -91,71 +86,114 @@
     </div>`;
   }
 
+  // ---------- Visuals (Icons/Farben je Posten) ----------
+  const WDL = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+  const kostenById = (id) => C.P.kosten.find((x) => x.id === id);
+  const visKosten = (k) => UI.visual(k.kat, k.bez);
+  const visRate = (r) => UI.visual('Rate', r.bez);
+  const visEin = (e) => UI.visual('Einnahme', e.bez);
+  function visBuchung(b) {
+    const k = b.kat ? kostenById(b.kat) : null;
+    if (k) return visKosten(k);
+    return num(b.betrag) < 0 ? UI.visual('Einnahme', b.bez) : UI.visual('Sonstiges', b.bez);
+  }
+  function visRow(r) {
+    if (r.src === 'kosten') { const k = kostenById(r.ref); return k ? visKosten(k) : UI.visual('Sonstiges', r.name); }
+    if (r.src === 'rate') return UI.visual('Rate', r.name);
+    if (r.src === 'einnahme') return UI.visual('Einnahme', r.name);
+    return visBuchung(S.buchungen.find((b) => b.id === r.id) || { kat: r.kat, betrag: -r.a, bez: r.name });
+  }
+  const dayLabel = (d) => {
+    const t = C.today, a = ymd(d);
+    if (d === t) return 'Heute'; if (d === t + 1) return 'Morgen'; if (d === t - 1) return 'Gestern';
+    return `${WDL[E.weekday(d)]}, ${a.d}. ${MON[a.m - 1]}`;
+  };
+  const pct = (v) => `${Math.round(v * 100)} %`;
+  const katLabel = (k) => (k === 'Rate' ? 'Raten & Kredite' : k);
+
   // ----- Tab: Jetzt -----
   function viewJetzt() {
-    const K = C.K;
-    let out = `<div class="top"><h1>Konto jetzt</h1><button class="pill" data-act="konto">Kontostand</button></div>`;
-    if (K.veraltet > 0) out += `<button class="banner warn" data-act="konto">⚠ <span>Kontostand ist <b>${K.veraltet} ${K.veraltet === 1 ? 'Tag' : 'Tage'} alt</b> – tippen zum Aktualisieren</span></button>`;
+    const K = C.K, t = ymd(C.today);
+    let out = `<div class="top"><div><div class="eyebrow">${WDL[E.weekday(C.today)]}, ${t.d}. ${MON[t.m - 1]}</div><h1>Konto jetzt</h1></div><button class="pill" data-act="konto">${UI.svg('wallet', 'class="pi"')}Kontostand</button></div>`;
+    if (K.veraltet > 0) out += `<button class="banner warn" data-act="konto">${UI.svg('clock', 'class="bi"')}<span>Kontostand ist <b>${K.veraltet} ${K.veraltet === 1 ? 'Tag' : 'Tage'} alt</b> – tippen zum Aktualisieren</span></button>`;
+
+    // Hero
+    const zyk = Math.max(1, K.ZEnde - K.ZStart), vergangen = Math.min(1, Math.max(0, (K.KDatum - K.ZStart) / zyk));
+    const dispoUse = K.KDispo > 0 ? Math.max(0, Math.min(1, -K.KStand / K.KDispo)) : 0;
     const neg = K.KFrei < 0;
-    out += `<section class="hero">
-      <div class="label">Frei bis zum Gehalt · nach Puffer</div>
-      <div class="big num ${neg ? 'neg' : ''}">${fmt(K.KFrei)}</div>
-      <div class="sub">${neg ? 'Dispo-Grenze würde überschritten' : `≈ ${fmt(K.proTag)} pro Tag`} · noch ${K.tageBisGehalt} ${K.tageBisGehalt === 1 ? 'Tag' : 'Tage'} · Gehalt ${fds(K.ZEnde)}</div>
+    out += `<section class="hero-g ${neg ? 'bad' : ''}" data-act="konto">
+      <div class="hg-top"><div class="hg-main"><div class="hg-l">Frei bis zum Gehalt</div><div class="hg-big num">${fmt(K.KFrei)}</div>
+        <div class="hg-sub">${neg ? 'Dispo-Grenze würde überschritten' : `≈ ${fmt(K.proTag)} pro Tag`}</div></div>
+        ${UI.ring(1 - vergangen, 'rgba(255,255,255,.95)', 84, 8, `<b>${K.tageBisGehalt}</b><span>${K.tageBisGehalt === 1 ? 'Tag' : 'Tage'}</span>`)}</div>
+      <div class="hg-stats"><div><span>Kontostand</span><b class="num">${fmt(K.KStand)}</b></div><div><span>Verfügbar</span><b class="num">${fmt(K.KStand + K.KDispo)}</b></div><div><span>Nach Budgets</span><b class="num">${fmt(K.KRest)}</b></div></div>
+      ${K.KDispo > 0 ? `<div class="hg-bar"><div class="hg-bl"><span>Dispo genutzt</span><span>${pct(dispoUse)} von ${fmt(K.KDispo)}</span></div><div class="hg-track"><i style="width:${(dispoUse * 100).toFixed(1)}%"></i></div></div>` : ''}
+      <div class="hg-foot">Gehalt ${fds(K.ZEnde)}${C.naechstesGehalt ? ` · erwartet ${fmt(C.naechstesGehalt)}` : ''} · Stand vom ${fd(K.KDatum)}</div>
     </section>`;
-    if (K.KBudgetRest > K.KFrei + 0.004) out += `<div class="banner bad" style="margin-top:10px">⚠ Budgets (${fmt(K.KBudgetRest)}) passen nicht rein – es fehlen ${fmt(K.KBudgetRest - K.KFrei)}</div>`;
-    out += `<div class="grid2">
-      <div class="tile"><div class="l">Rest nach Budgets</div><div class="v">${money(K.KRest)}</div><div class="s">Budgets noch ${fmt(K.KBudgetRest)}</div></div>
-      <button class="tile" data-act="konto"><div class="l">Kontostand</div><div class="v">${money(K.KStand)}</div><div class="s">vom ${fd(K.KDatum)}</div></button>
-    </div>`;
+    if (K.KBudgetRest > K.KFrei + 0.004) out += `<div class="banner bad">${UI.svg('help', 'class="bi"')}<span>Budgets (${fmt(K.KBudgetRest)}) passen nicht rein – es fehlen <b>${fmt(K.KBudgetRest - K.KFrei)}</b></span></div>`;
 
     // Budgets
     const bl = K.budgetListe.filter((b) => b.budget > 0 || b.ausgegeben > 0);
-    out += `<h2>Budgets im Gehaltszyklus <button data-act="add">+ Ausgabe</button></h2><div class="card">`;
-    if (!bl.length) out += `<div class="empty">Keine variablen Budgets angelegt (Posten → Kosten, Typ „Variabel“).</div>`;
+    out += `<h2>Budgets<button data-act="add">+ Ausgabe</button></h2><div class="hscroll">`;
     for (const b of bl) {
-      const pct = b.budget > 0 ? Math.min(100, (b.ausgegeben / b.budget) * 100) : 100;
-      const over = b.rest < -0.004;
-      out += `<button class="row tap" data-act="add" data-kat="${h(b.id)}"><div class="main">
-        <div class="t" style="display:flex;justify-content:space-between;gap:8px"><span>${h(b.bez)}</span><span class="num ${over ? 'neg' : ''}" style="font-weight:600">${over ? 'über ' + fmt(-b.rest) : 'noch ' + fmt(b.rest)}</span></div>
-        <div class="bar"><i class="${over ? 'over' : ''}" style="width:${pct}%"></i></div>
-        <div class="s">${fmt(b.ausgegeben)} von ${fmt(b.budget)} ausgegeben</div></div></button>`;
+      const k = kostenById(b.id), v = visKosten(k), over = b.rest < -0.004;
+      const p = b.budget > 0 ? b.ausgegeben / b.budget : 1;
+      out += `<button class="bcard" data-act="add" data-kat="${h(b.id)}">
+        <div class="bc-head">${UI.icon(v, 'sm')}<span>${h(b.bez)}</span></div>
+        <div class="bc-body">${UI.ring(p, over ? 'var(--neg)' : v.color, 58, 7, `<small>${b.budget > 0 ? Math.round(p * 100) + '%' : '–'}</small>`)}
+        <div><div class="bc-v num ${over ? 'neg' : ''}">${over ? '−' + fmt(-b.rest) : fmt(b.rest)}</div><div class="bc-s">${over ? 'überzogen' : 'übrig'} · von ${fmt(b.budget)}</div></div></div></button>`;
     }
-    out += `</div><div class="foot">Seit ${fds(K.ZStart)} erfasst. ${S.budgetModus === 'anteilig' ? 'Modus „anteilig“: Restbudget wird nach verbleibenden Tagen berechnet (wie Excel).' : 'Restbudget = Budget minus erfasste Ausgaben.'}</div>`;
+    out += `<button class="bcard add" data-act="add">${UI.svg('in', 'style="transform:rotate(180deg)"')}<span>Ausgabe erfassen</span></button></div>`;
 
-    // Bis zum Gehalt
-    const abst = K.KMin + K.KDispo;
-    out += `<h2>Bis zum Gehalt am ${fds(K.ZEnde)}</h2><div class="card">
-      <div class="kv"><span class="k">Noch offene Abbuchungen</span><span class="v">${money(K.KOffenAus)}</span></div>
-      <div class="kv"><span class="k">Noch offene Eingänge</span><span class="v">${money(K.KOffenEin)}</span></div>
-      <div class="kv total"><span class="k">Kontostand vor Gehalt<small>ohne Budgets · mit Budgets ${fmt(K.KVorGehalt - K.KBudgetRest)}</small></span><span class="v">${money(K.KVorGehalt)}</span></div>
-      <div class="kv"><span class="k">Tiefster Stand inkl. Budgets<small>am ${fds(K.KMinDatum)} · Abstand zur Grenze ${fmt(abst)}</small></span><span class="v">${money(K.KMin)}</span></div>
-      <div class="kv"><span class="k">Worst Case<small>Eingänge bleiben aus, Budgets werden ausgegeben</small></span><span class="v">${money(K.KWorst)}</span></div>
-      <div class="kv"><span class="k">Dispo-Grenze${K.KPuffer ? `<small>Puffer ${fmt(K.KPuffer)}</small>` : ''}</span><span class="v">${money(-K.KDispo)}</span></div>
-    </div>`;
-    if (K.KFreiSicher < 0) out += `<div class="banner warn" style="margin-top:10px">⚠ Im Worst Case wird die Grenze um ${fmt(-K.KFreiSicher)} überschritten</div>`;
-    if (C.naechstesGehalt) out += `<div class="foot">Erwartetes Gehalt am ${fds(K.ZEnde)}: ${fmt(C.naechstesGehalt)}</div>`;
+    // Kontoverlauf bis Gehalt
+    const pend = K.rows.filter((r) => r.status !== 'erledigt');
+    const pts = [];
+    for (let d = K.KDatum; d <= Math.max(K.KDatum + 1, K.ZEnde - 1); d++) {
+      const bal = K.KStand + pend.filter((r) => r.d <= d).reduce((a, r) => a + r.a, 0) - K.KBudgetTag * (d - K.KDatum);
+      pts.push([d, bal]);
+    }
+    const minP = pts.reduce((m, p) => (p[1] < m[1] ? p : m), pts[0]);
+    const lastIdx = pts.length - 1;
+    out += `<h2>Kontoverlauf bis zum Gehalt</h2><div class="card chart">
+      <div class="ch-head"><div><span>Tiefster Stand</span><b class="num ${minP[1] < -K.KDispo ? 'neg' : ''}">${fmt(minP[1])}</b></div><div class="r"><span>Abstand zur Grenze</span><b class="num ${minP[1] + K.KDispo < 0 ? 'neg' : 'pos'}">${fmt(minP[1] + K.KDispo)}</b></div></div>
+      ${UI.area(pts, { limit: -K.KDispo, limitLabel: 'Dispo-Grenze', id: 'kv', mark: [minP[0], minP[1], fds(minP[0])], xLabels: [[pts[0][0], 'Heute', 'start'], [pts[Math.floor(lastIdx / 2)][0], fds(pts[Math.floor(lastIdx / 2)][0])], [pts[lastIdx][0], 'Gehalt', 'end']] })}
+      <div class="ch-foot">inkl. Budgets, gleichmäßig pro Tag verteilt</div></div>`;
+
+    // Kennzahlen
     const A = C.ausblick;
+    out += `<div class="grid2">
+      <div class="tile">${UI.icon({ color: '#e5484d', icon: 'card' }, 'xs')}<div class="l">Offene Abbuchungen</div><div class="v num">${fmt(K.KOffenAus)}</div></div>
+      <div class="tile">${UI.icon({ color: '#16a34a', icon: 'in' }, 'xs')}<div class="l">Offene Eingänge</div><div class="v num pos">${fmt(K.KOffenEin)}</div></div>
+      <div class="tile">${UI.icon({ color: '#5b6cf0', icon: 'calendar' }, 'xs')}<div class="l">Vor dem Gehalt</div><div class="v num">${fmt(K.KVorGehalt - K.KBudgetRest)}</div><div class="s">inkl. Budgets</div></div>
+      <div class="tile">${UI.icon({ color: K.KFreiSicher < 0 ? '#e5484d' : '#8a8f98', icon: 'shield' }, 'xs')}<div class="l">Worst Case</div><div class="v num ${K.KFreiSicher < 0 ? 'neg' : ''}">${fmt(K.KWorst)}</div><div class="s">${K.KFreiSicher < 0 ? `${fmt(-K.KFreiSicher)} über Grenze` : 'Eingänge bleiben aus'}</div></div>
+    </div>`;
     if (A) {
       const cls = A.status === 'ok' ? 'good' : A.status === 'knapp' ? 'warn' : 'bad';
-      const txt = A.status === 'ok' ? `✔ Grenze wird in 12 Monaten nicht erreicht – tiefster Stand ${fmt(A.min)} (${fms(A.monat)})`
-        : A.status === 'knapp' ? `⚠ Knapp: tiefster Stand ${fmt(A.min)} im ${fm(A.monat)}` : `⚠ Dispo-Grenze wird überschritten – tiefster Stand ${fmt(A.min)} im ${fm(A.monat)}`;
-      out += `<button class="banner ${cls}" style="margin-top:10px" data-act="go-monat">${txt}</button>`;
+      const txt = A.status === 'ok' ? `Grenze wird in 12 Monaten nicht erreicht – tiefster Stand <b>${fmt(A.min)}</b> (${fms(A.monat)})`
+        : A.status === 'knapp' ? `Knapp: tiefster Stand <b>${fmt(A.min)}</b> im ${fm(A.monat)}` : `Dispo-Grenze wird überschritten – <b>${fmt(A.min)}</b> im ${fm(A.monat)}`;
+      out += `<button class="banner ${cls}" style="margin-top:10px" data-act="go-monat">${UI.svg('chart', 'class="bi"')}<span>${txt}</span></button>`;
     }
 
-    // Buchungen
+    // Buchungen nach Tag
     const rows = K.rows.filter((r) => ui.zeigeErledigt || r.status !== 'erledigt');
-    const nErl = K.rows.length - K.rows.filter((r) => r.status !== 'erledigt').length;
-    out += `<h2>Buchungen im Zyklus ${nErl ? `<button data-act="toggle-erledigt">${ui.zeigeErledigt ? 'Erledigte ausblenden' : `+ ${nErl} erledigte`}</button>` : ''}</h2><div class="card">`;
-    if (!rows.length) out += `<div class="empty">Keine offenen Buchungen bis zum Gehalt.</div>`;
+    const nErl = K.rows.length - pend.length;
+    out += `<h2>Kommende Buchungen${nErl ? `<button data-act="toggle-erledigt">${ui.zeigeErledigt ? 'Erledigte ausblenden' : `+ ${nErl} erledigte`}</button>` : ''}</h2>`;
+    if (!rows.length) out += `<div class="card"><div class="empty">Keine offenen Buchungen bis zum Gehalt.</div></div>`;
+    let curD = null;
     for (const r of rows) {
-      const a = ymd(r.d), erl = r.status === 'erledigt';
-      const sub = [r.status === 'vorgemerkt' ? '<span class="tag acc">vorgemerkt</span>' : erl ? '<span class="tag">✔ erledigt</span>' : '', r.verschoben ? `<span class="tag warn">verschoben von ${fds(r.nd)}</span>` : ''].filter(Boolean).join(' ');
-      out += `<div class="row ${erl ? 'dim' : ''} ${r.src === 'buchung' ? 'tap' : ''}" ${r.src === 'buchung' ? `data-act="edit" data-ent="buchungen" data-id="${h(r.id)}"` : ''}>
-        <div class="date"><b>${a.d}</b><span>${WD[E.weekday(r.d)]}</span></div>
-        <div class="main"><div class="t">${h(r.name)}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>
-        <div class="r"><div class="num ${r.a > 0 ? 'pos' : ''}" style="font-weight:600">${plus(r.a)}</div>${r.run != null ? `<div class="s num">→ ${fmt(r.run)}</div>` : ''}</div></div>`;
+      if (r.d !== curD) {
+        if (curD != null) out += `</div>`;
+        const daySum = rows.filter((x) => x.d === r.d).reduce((a, x) => a + x.a, 0);
+        out += `<div class="dayhdr"><span>${dayLabel(r.d)}</span><span class="num">${plus(daySum)}</span></div><div class="card">`; curD = r.d;
+      }
+      const erl = r.status === 'erledigt', tap = r.src === 'buchung';
+      const sub = [r.status === 'vorgemerkt' ? '<span class="tag acc">vorgemerkt</span>' : erl ? '<span class="tag">✔ erledigt</span>' : r.src === 'rate' ? 'Rate' : r.src === 'einnahme' ? 'Eingang' : h((kostenById(r.ref) || {}).kat || ''),
+        r.verschoben ? `<span class="tag warn">von ${fds(r.nd)}</span>` : ''].filter(Boolean).join(' ');
+      out += `<div class="row ${erl ? 'dim' : ''} ${tap ? 'tap' : ''}" ${tap ? `data-act="edit" data-ent="buchungen" data-id="${h(r.id)}"` : ''}>
+        ${UI.icon(visRow(r))}<div class="main"><div class="t">${h(r.name)}</div><div class="s">${sub}</div></div>
+        <div class="r"><div class="amt num ${r.a > 0 ? 'pos' : ''}">${plus(r.a)}</div>${r.run != null ? `<div class="s num">${fmt(r.run)}</div>` : ''}</div></div>`;
     }
-    out += `</div><div class="foot">„→“ = Kontostand danach inkl. Budgets (gleichmäßig pro Tag verteilt). Buchungen mit Datum ≤ „Stand vom“ gelten als erledigt; vorgemerkte zählen, solange ihr Datum ≥ „Stand vom“ ist.</div>`;
+    if (curD != null) out += `</div>`;
+    out += `<div class="foot">Kleine Zahl = Kontostand danach inkl. Budgets. Vorgemerkte zählen, solange ihr Datum ≥ „Stand vom“ ist.</div>`;
     return out;
   }
 
@@ -164,92 +202,115 @@
     const m = ui.monat;
     const r = C.plan.find((x) => x.m === m);
     const val = `${ymd(m).y}-${p2(ymd(m).m)}`;
-    let out = `<div class="top"><h1>Übersicht</h1><button class="pill" data-act="mehr" data-v="plan">Planung</button></div>
-      <div class="monthnav"><button class="arrow" data-act="mon" data-d="-1">‹</button>
-      <div class="lbl">${fm(m)}<input type="month" value="${val}" data-act="mon-pick"></div>
-      <button class="arrow" data-act="mon" data-d="1">›</button></div>`;
+    let out = `<div class="top"><div><div class="eyebrow">Übersicht</div><h1>${MON[ymd(m).m - 1]} <span class="muted">${ymd(m).y}</span></h1></div><button class="pill" data-act="mehr" data-v="plan">${UI.svg('list', 'class="pi"')}Planung</button></div>
+      <div class="monthnav"><button class="arrow" data-act="mon" data-d="-1" aria-label="Vormonat">‹</button>
+      <div class="lbl">${UI.svg('calendar', 'class="pi"')} ${fm(m)}<input type="month" value="${val}" data-act="mon-pick" aria-label="Monat wählen"></div>
+      <button class="arrow" data-act="mon" data-d="1" aria-label="Nächster Monat">›</button></div>`;
     if (!r) return out + `<div class="card"><div class="empty">Monat liegt außerhalb der Planung (Start ${fm(som(D(S.planStart)))}, 8 Jahre).</div></div>`;
-    const tp = C.topf.rows.find((x) => x.m === m);
-    out += `<div class="grid2" style="margin-top:0">
-      <div class="tile"><div class="l">Einnahmen</div><div class="v num">${fmt(r.einnahmen)}</div><div class="s">davon Gehalt ${fmt(r.gehalt)}</div></div>
-      <div class="tile"><div class="l">Ausgaben (Giro)</div><div class="v num">${fmt(r.ausgaben)}</div><div class="s">davon Raten ${fmt(r.raten)}</div></div>
-      <div class="tile"><div class="l">Frei verfügbar</div><div class="v">${money(r.frei)}</div><div class="s">ggü. Vormonat ${plus(r.veraenderung)}</div></div>
-      <button class="tile" data-act="mehr" data-v="topf"><div class="l">Rücklagen-Topf</div><div class="v">${money(tp.stand)}</div><div class="s">${C.topf.diff < 0 ? '⚠ Sparrate zu niedrig' : '✔ Sparrate reicht'}</div></button>
-    </div>`;
-    if (r.kontoVorGehalt != null) out += `<div class="card pad" style="margin-top:10px;display:flex;justify-content:space-between"><span class="muted">Kontostand vor Gehalt (Prognose)</span><b>${money(r.kontoVorGehalt)}</b></div>`;
-    if (r.ereignisse.length) out += `<div class="events">${r.ereignisse.map((e) => `<div class="banner good" style="margin:0">★ ${h(e)}</div>`).join('')}</div>`;
 
+    // Cashflow-Karte
+    const quote = r.einnahmen > 0 ? Math.min(1, r.ausgaben / r.einnahmen) : 1;
+    out += `<section class="card cash">
+      <div class="cf-top"><div><div class="l">Frei verfügbar</div><div class="big num ${sign(r.frei)}">${fmt(r.frei)}</div></div>
+      <span class="chip-d ${r.veraenderung > 0.004 ? 'up' : r.veraenderung < -0.004 ? 'down' : ''}">${r.veraenderung > 0.004 ? '▲' : r.veraenderung < -0.004 ? '▼' : '•'} ${plus(r.veraenderung)}</span></div>
+      <div class="cf-cols"><div>${UI.icon({ color: '#16a34a', icon: 'in' }, 'xs')}<span class="l">Einnahmen</span><b class="num">${fmt(r.einnahmen)}</b><small>Gehalt ${fmt(r.gehalt)}${r.weitere ? ` · weitere ${fmt(r.weitere)}` : ''}${r.sonder ? ` · Sonder ${fmt(r.sonder)}` : ''}</small></div>
+      <div>${UI.icon({ color: '#e5484d', icon: 'card' }, 'xs')}<span class="l">Ausgaben</span><b class="num">${fmt(r.ausgaben)}</b><small>davon Raten ${fmt(r.raten)}</small></div></div>
+      <div class="cf-bar"><i style="width:${(quote * 100).toFixed(1)}%"></i></div><div class="cf-bl"><span>${pct(quote)} der Einnahmen verplant</span><span>${r.kontoVorGehalt != null ? 'Konto vor Gehalt ' + fmt(r.kontoVorGehalt) : ''}</span></div>
+    </section>`;
+    if (r.ereignisse.length) out += `<div class="events">${r.ereignisse.map((e) => `<div class="banner good" style="margin:0">${UI.svg('star', 'class="bi"')}<span>${h(e)}</span></div>`).join('')}</div>`;
+
+    // Säulen: frei verfügbar
+    const i0 = Math.max(0, Math.min(C.plan.length - 12, C.plan.findIndex((x) => x.m === m) - 5));
+    const win = C.plan.slice(i0, i0 + 12);
+    out += `<h2>Frei verfügbar je Monat</h2><div class="card chart">${UI.bars(win.map((x) => ({ label: MON[ymd(x.m).m - 1][0], v: x.frei, key: x.m, on: x.m === m })), { fmt: (v) => fmt(v) })}
+      <div class="ch-foot">${fms(win[0].m)} – ${fms(win[win.length - 1].m)} · Säule antippen zum Wechseln</div></div>`;
+
+    // Donut nach Kategorie
     const posten = E.monatsPosten(C.P, m);
-    out += `<h2>Ausgaben im Monat</h2><div class="card">`;
+    const byCat = {};
+    for (const p of posten) byCat[p.kat] = (byCat[p.kat] || 0) + p.betrag;
+    const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+    const tot = cats.reduce((a, c) => a + c[1], 0);
+    if (cats.length) {
+      out += `<h2>Ausgaben nach Kategorie</h2><div class="card pad"><div class="donut-wrap">${UI.donut(cats.map(([k, v]) => ({ v, color: UI.catColor(k) })), 200, 22, `<span>Gesamt</span><b class="num">${fmt(tot)}</b><span>${posten.length} Posten</span>`)}</div><div class="legend">`;
+      for (const [k, v] of cats) {
+        const vis = UI.visual(k, k === 'Rate' ? 'Kredit' : '');
+        out += `<div class="lg-row">${UI.icon({ ...vis, color: UI.catColor(k) }, 'sm')}<div class="main"><div class="lg-t"><span>${h(katLabel(k))}</span><b class="num">${fmt(v)}</b></div>
+          <div class="lg-bar"><i style="width:${((v / tot) * 100).toFixed(1)}%;background:${UI.catColor(k)}"></i></div></div><span class="lg-p">${Math.round((v / tot) * 100)}%</span></div>`;
+      }
+      out += `</div></div>`;
+    }
+
+    // Einzelposten
+    out += `<h2>Alle Ausgaben im ${MON[ymd(m).m - 1]}<span class="num" style="text-transform:none">${fmt(tot)}</span></h2><div class="card">`;
     if (!posten.length) out += `<div class="empty">Keine Ausgaben.</div>`;
-    for (const p of posten) out += `<div class="row"><div class="main"><div class="t">${h(p.bez)}</div><div class="s">${h(p.kat)}${p.typ === 'Variabel' ? ' · Budget' : ''}</div></div><div class="r num">${fmt(p.betrag)}</div></div>`;
+    for (const p of posten) {
+      const v = p.typ === 'Rate' ? UI.visual('Rate', p.bez) : UI.visual(p.kat, p.bez);
+      out += `<div class="row">${UI.icon(v)}<div class="main"><div class="t">${h(p.bez)}</div><div class="s">${h(katLabel(p.kat))}${p.typ === 'Variabel' ? ' · Budget' : ''}</div></div><div class="r amt num">${fmt(p.betrag)}</div></div>`;
+    }
     out += `</div>`;
 
-    // Erfasste Ausgaben im Kalendermonat
+    // Erfasste Buchungen vs. Budget (Kalendermonat)
     const mEnd = E.eomonth(m, 0);
     const erf = S.buchungen.filter((b) => { const d = D(b.datum); return d >= m && d <= mEnd; });
     if (erf.length) {
-      const byKat = {};
-      for (const b of erf) { const k = b.kat || '_'; byKat[k] = (byKat[k] || 0) + num(b.betrag); }
-      out += `<h2>Erfasste Buchungen im ${MON[ymd(m).m - 1]}</h2><div class="card">`;
-      for (const [k, v] of Object.entries(byKat).sort((a, b) => b[1] - a[1])) {
-        const kb = C.P.kosten.find((x) => x.id === k);
-        out += `<div class="kv"><span class="k">${h(kb ? kb.bez : 'Ohne Budget')}${kb ? `<small>Budget ${fmt(kb.proMonat)}</small>` : ''}</span><span class="v num">${fmt(v)}</span></div>`;
+      const byK = {};
+      for (const b of erf) { const k = b.kat || '_'; byK[k] = (byK[k] || 0) + num(b.betrag); }
+      out += `<h2>Erfasst im ${MON[ymd(m).m - 1]}</h2><div class="card">`;
+      for (const [k, v] of Object.entries(byK).sort((a, b) => b[1] - a[1])) {
+        const kb = kostenById(k);
+        const vis = kb ? visKosten(kb) : UI.visual('Sonstiges', '');
+        const p = kb && kb.proMonat > 0 ? v / kb.proMonat : null;
+        out += `<div class="row">${UI.icon(vis)}<div class="main"><div class="t">${h(kb ? kb.bez : 'Ohne Budget')}</div>${p != null ? `<div class="bar"><i class="${p > 1 ? 'over' : ''}" style="width:${Math.min(100, p * 100)}%;${p <= 1 ? `background:${vis.color}` : ''}"></i></div><div class="s">${pct(p)} von ${fmt(kb.proMonat)}</div>` : ''}</div><div class="r amt num">${fmt(v)}</div></div>`;
       }
       out += `</div>`;
     }
 
-    // Prognose-Chart
+    // Prognose Kontostand
     const pts = C.plan.filter((x) => x.kontoVorGehalt != null).slice(0, 24);
-    if (pts.length > 1) out += `<h2>Kontostand vor Gehalt – 24 Monate</h2><div class="card chart">${lineChart(pts.map((x) => [x.m, x.kontoVorGehalt]), -C.K.KDispo, m)}</div>`;
+    if (pts.length > 1) {
+      const sel = pts.find((x) => x.m === m);
+      out += `<h2>Kontostand vor Gehalt · 24 Monate</h2><div class="card chart">${UI.area(pts.map((x) => [x.m, x.kontoVorGehalt]), {
+        limit: -C.K.KDispo, limitLabel: 'Dispo-Grenze', id: 'kp',
+        mark: sel ? [sel.m, sel.kontoVorGehalt, fmt(sel.kontoVorGehalt)] : [pts[pts.length - 1].m, pts[pts.length - 1].kontoVorGehalt, fmt(pts[pts.length - 1].kontoVorGehalt)],
+        xLabels: [[pts[0].m, fms(pts[0].m), 'start'], [pts[12] ? pts[12].m : pts[0].m, pts[12] ? fms(pts[12].m) : ''], [pts[pts.length - 1].m, fms(pts[pts.length - 1].m), 'end']],
+      })}</div>`;
+    }
 
     // Raten-Ende
-    const re = C.P.raten.filter((x) => x.letzte != null).sort((a, b) => a.letzte - b.letzte);
+    const re = C.P.raten.filter((x) => x.letzte != null && x.offen > 0).sort((a, b) => a.letzte - b.letzte);
     if (re.length) {
-      out += `<h2>Wann bleibt mehr übrig?</h2><div class="card">`;
+      out += `<h2>Wann bleibt mehr übrig?</h2><div class="card timeline">`;
       for (const x of re) {
         const pr = C.plan.find((p) => p.m === x.mehrFreiAb);
-        out += `<button class="row tap" data-act="mon-set" data-m="${x.mehrFreiAb}"><div class="main"><div class="t">${h(x.bez)}</div><div class="s">bis ${fmy(x.letzte)} · mehr frei ab ${fms(x.mehrFreiAb)}</div></div>
-          <div class="r"><div class="num pos" style="font-weight:600">+${fmt(num(x.rate))}</div><div class="s">${pr ? 'dann frei ' + fmt(pr.frei) : ''}</div></div></button>`;
+        out += `<button class="row tap" data-act="mon-set" data-m="${x.mehrFreiAb}">${UI.icon(visRate(x))}<div class="main"><div class="t">${h(x.bez)}</div><div class="s">ab ${fm(x.mehrFreiAb)}${pr ? ` · dann frei ${fmt(pr.frei)}` : ''}</div></div>
+          <div class="r"><div class="amt num pos">+${fmt(num(x.rate))}</div><div class="s">pro Monat</div></div></button>`;
       }
       out += `</div>`;
     }
     return out;
   }
 
-  function lineChart(pts, limit, mark) {
-    const W = 340, H = 170, L = 8, R = 8, T = 12, B = 22;
-    const vals = pts.map((p) => p[1]).concat([limit, 0]);
-    let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.08 || 100; lo -= pad; hi += pad;
-    const x = (i) => L + (i * (W - L - R)) / (pts.length - 1), y = (v) => T + ((hi - v) * (H - T - B)) / (hi - lo);
-    const path = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join('');
-    const area = `${path}L${x(pts.length - 1).toFixed(1)},${(H - B).toFixed(1)}L${x(0).toFixed(1)},${(H - B).toFixed(1)}Z`;
-    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Prognose Kontostand">
-      <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".25"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
-      <path d="${area}" fill="url(#g)"/>`;
-    s += `<line x1="${L}" x2="${W - R}" y1="${y(limit)}" y2="${y(limit)}" stroke="var(--neg)" stroke-dasharray="4 3" stroke-width="1.2"/>
-      <text x="${W - R}" y="${y(limit) - 4}" text-anchor="end" style="fill:var(--neg)">Dispo-Grenze ${fmt(limit)}</text>`;
-    if (0 < hi && 0 > lo) s += `<line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--line)" stroke-width="1"/><text x="${L}" y="${y(0) - 4}">0 €</text>`;
-    s += `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    pts.forEach((p, i) => {
-      if (p[0] === mark) s += `<circle cx="${x(i)}" cy="${y(p[1])}" r="4.5" fill="var(--accent)" stroke="var(--card)" stroke-width="2"/>`;
-      if (i % 6 === 0 || i === pts.length - 1) s += `<text x="${x(i)}" y="${H - 6}" text-anchor="${i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle'}">${fms(p[0])}</text>`;
-    });
-    const last = pts[pts.length - 1];
-    s += `<text x="${W - R}" y="${y(last[1]) - 8}" text-anchor="end" style="fill:var(--text);font-weight:600">${fmt(last[1])}</text></svg>`;
-    return s;
-  }
-
   // ----- Tab: Posten -----
   function viewPosten() {
     const t = ui.posten;
-    let out = `<div class="top"><h1>Posten</h1><button class="pill" data-act="new" data-ent="${t === 'einnahmen' ? 'einnahmen' : t}">+ Neu</button></div>
+    let out = `<div class="top"><div><div class="eyebrow">Verträge & Einnahmen</div><h1>Posten</h1></div><button class="pill" data-act="new" data-ent="${t}">+ Neu</button></div>
       <div class="seg">${[['kosten', 'Kosten'], ['raten', 'Raten'], ['einnahmen', 'Einnahmen']].map(([k, l]) => `<button class="${t === k ? 'on' : ''}" data-act="posten-tab" data-v="${k}">${l}</button>`).join('')}</div>`;
     const today = C.today;
     if (t === 'kosten') {
+      const aktiv = C.P.kosten.filter((k) => !(k.bis && k.bis < today) && k.iv !== 0);
+      const fixe = aktiv.filter((k) => k.typ !== 'Variabel');
+      const byCat = {};
+      for (const k of fixe) byCat[k.kat] = (byCat[k.kat] || 0) + k.proMonat;
+      const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+      const sumFix = fixe.reduce((a, k) => a + k.proMonat, 0), sumVar = aktiv.filter((k) => k.typ === 'Variabel').reduce((a, k) => a + k.proMonat, 0);
+      out += `<section class="card pad sumcard"><div class="l">Fixkosten pro Monat (Ø)</div><div class="big num">${fmt(sumFix)}</div>
+        ${UI.stack(cats.map(([k, v]) => ({ v, color: UI.catColor(k) })))}
+        <div class="lg-chips">${cats.map(([k, v]) => `<span><i style="background:${UI.catColor(k)}"></i>${h(k)} <b class="num">${fmt(v)}</b></span>`).join('')}</div>
+        <div class="sum-sub"><span>+ Budgets</span><b class="num">${fmt(sumVar)}</b><span>+ Raten</span><b class="num">${fmt(C.P.raten.filter((r) => r.offen > 0).reduce((a, r) => a + num(r.rate), 0))}</b></div></section>`;
       const groups = [
         ['Fixkosten · Girokonto', (k) => k.typ === 'Fixkosten' && k.ueber === 'Girokonto'],
-        ['Fixkosten · über Sparkonto (Topf)', (k) => k.typ === 'Fixkosten' && k.ueber !== 'Girokonto'],
+        ['Über Sparkonto (Rücklagen-Topf)', (k) => k.typ === 'Fixkosten' && k.ueber !== 'Girokonto'],
         ['Rücklage', (k) => k.typ === 'Rücklage'],
         ['Variable Budgets', (k) => k.typ === 'Variabel'],
       ];
@@ -257,11 +318,12 @@
         const items = C.P.kosten.filter(f);
         if (!items.length) continue;
         const sum = items.filter((k) => !(k.bis && k.bis < today)).reduce((a, k) => a + k.proMonat, 0);
-        out += `<h2>${title}<span class="num" style="text-transform:none">Ø ${fmt(sum)}/Mon.</span></h2><div class="card">`;
+        out += `<h2>${title}<span class="num" style="text-transform:none">Ø ${fmt(sum)}</span></h2><div class="card">`;
         for (const k of items) {
           const ended = k.bis && k.bis < today;
-          const det = [k.kat, k.rhythmus !== 'Monatlich' ? (k.rhythmus === 'Einmalig' ? 'einmalig ' + (k.von != null ? fd(k.von) : '') : `${k.rhythmus}${k.faellig ? ' ab ' + MON[k.faellig - 1].slice(0, 3) : ''}`) : '', k.tag ? `am ${k.tag}.` : '', ended ? 'beendet' : k.bis ? 'bis ' + fd(k.bis) : ''].filter(Boolean).join(' · ');
-          out += `<button class="row tap chev ${ended ? 'dim' : ''}" data-act="edit" data-ent="kosten" data-id="${h(k.id)}"><div class="main"><div class="t">${h(k.bez)}</div><div class="s">${h(det)}</div></div><div class="r num">${fmt(num(k.betrag))}${k.iv > 1 ? `<div class="s">Ø ${fmt(k.proMonat)}</div>` : ''}</div></button>`;
+          const rh = k.rhythmus === 'Monatlich' ? 'monatlich' : k.rhythmus === 'Einmalig' ? 'einmalig ' + (k.von != null ? fd(k.von) : '') : `${k.rhythmus.toLowerCase()}${k.faellig ? ', ab ' + MON[k.faellig - 1] : ''}`;
+          const det = [rh, k.tag ? `am ${k.tag}.` : '', ended ? 'beendet' : k.bis ? 'bis ' + fd(k.bis) : ''].filter(Boolean).join(' · ');
+          out += `<button class="row tap ${ended ? 'dim' : ''}" data-act="edit" data-ent="kosten" data-id="${h(k.id)}">${UI.icon(visKosten(k))}<div class="main"><div class="t">${h(k.bez)}</div><div class="s">${h(det)}</div></div><div class="r"><div class="amt num">${fmt(num(k.betrag))}</div>${k.iv > 1 ? `<div class="s">Ø ${fmt(k.proMonat)}/Mon.</div>` : `<div class="s">${h(k.kat)}</div>`}</div></button>`;
         }
         out += `</div>`;
       }
@@ -269,34 +331,40 @@
     } else if (t === 'raten') {
       const rs = C.P.raten;
       const aktiv = rs.filter((r) => r.offen > 0);
-      out += `<div class="grid2" style="margin-top:0"><div class="tile"><div class="l">Monatsraten (aktiv)</div><div class="v num">${fmt(aktiv.reduce((a, r) => a + num(r.rate), 0))}</div></div>
-        <div class="tile"><div class="l">Noch zu zahlen</div><div class="v num">${fmt(rs.reduce((a, r) => a + r.rest, 0))}</div></div></div><h2>Raten & Kredite</h2><div class="card">`;
-      if (!rs.length) out += `<div class="empty">Noch keine Raten.</div>`;
-      for (const r of rs) {
-        const done = r.offen <= 0;
-        out += `<button class="row tap chev" data-act="edit" data-ent="raten" data-id="${h(r.id)}"><div class="main">
-          <div class="t" style="display:flex;justify-content:space-between;gap:8px"><span>${h(r.bez)} <span class="muted" style="font-size:13px">${h(r.anbieter || '')}</span></span><span class="num" style="font-weight:600">${fmt(num(r.rate))}</span></div>
-          <div class="bar"><i class="${done ? 'done' : ''}" style="width:${Math.round(r.fortschritt * 100)}%"></i></div>
-          <div class="s">${done ? '✔ abbezahlt' : `noch ${r.offen} von ${num(r.gesamt)} Raten · Rest ${fmt(r.rest)} · bis ${r.letzte != null ? fmy(r.letzte) : '–'}`}</div></div></button>`;
+      const restSum = rs.reduce((a, r) => a + r.rest, 0), gesSum = rs.reduce((a, r) => a + num(r.gesamt) * num(r.rate), 0);
+      out += `<section class="card pad sumcard"><div class="sum2"><div><div class="l">Monatsraten</div><div class="big num">${fmt(aktiv.reduce((a, r) => a + num(r.rate), 0))}</div></div>
+        <div class="r"><div class="l">Restschuld</div><div class="big num neg">${fmt(restSum)}</div></div></div>
+        <div class="bar thick"><i class="done" style="width:${gesSum ? ((1 - restSum / gesSum) * 100).toFixed(1) : 0}%"></i></div>
+        <div class="sum-sub"><span>${pct(gesSum ? 1 - restSum / gesSum : 0)} aller Raten bezahlt</span><span>${aktiv.length} aktiv</span></div></section>`;
+      if (!rs.length) out += `<div class="card"><div class="empty">Noch keine Raten.</div></div>`;
+      for (const r of [...rs].sort((a, b) => (a.letzte || 0) - (b.letzte || 0))) {
+        const done = r.offen <= 0, v = visRate(r);
+        out += `<button class="card ratecard tap" data-act="edit" data-ent="raten" data-id="${h(r.id)}">
+          ${UI.ring(r.fortschritt, done ? 'var(--pos)' : v.color, 64, 7, `<small>${Math.round(r.fortschritt * 100)}%</small>`)}
+          <div class="main"><div class="rc-t"><span>${h(r.bez)}</span><b class="num">${fmt(num(r.rate))}</b></div><div class="s">${h(r.anbieter || '')}${r.anbieter ? ' · ' : ''}${done ? '✔ abbezahlt' : `${r.offen} von ${num(r.gesamt)} Raten offen`}</div>
+          <div class="rc-f"><span>Rest <b class="num">${fmt(r.rest)}</b></span><span>bis <b>${r.letzte != null ? fmy(r.letzte) : '–'}</b></span></div></div></button>`;
       }
-      out += `</div><div class="foot">„Bereits bezahlt“ = Anzahl Raten vor der nächsten Abbuchung. Enddatum, Rest und Fortschritt rechnen sich mit dem heutigen Datum selbst weiter.</div>`;
+      out += `<div class="foot">„Bereits bezahlt“ = Anzahl Raten vor der nächsten Abbuchung. Enddatum, Rest und Fortschritt rechnen sich mit dem heutigen Datum selbst weiter.</div>`;
     } else {
-      out += `<h2>Gehalt (netto) <button data-act="new" data-ent="gehalt">+ Neu</button></h2><div class="card">`;
+      const curG = [...S.gehalt].filter((g) => D(g.ab) <= C.today).sort((a, b) => (a.ab < b.ab ? 1 : -1))[0];
+      const weitere = C.P.einnahmen.reduce((a, e) => a + E.imMonat(som(C.today), e.betrag, e.von, e.bis, e.iv, e.faellig), 0);
+      out += `<section class="card pad sumcard"><div class="sum2"><div><div class="l">Gehalt netto</div><div class="big num pos">${fmt(curG ? num(curG.netto) : 0)}</div></div>
+        <div class="r"><div class="l">Weitere / Monat</div><div class="big num pos">${fmt(weitere)}</div></div></div></section>`;
+      out += `<h2>Gehalt<button data-act="new" data-ent="gehalt">+ Neu</button></h2><div class="card">`;
       const gs = [...S.gehalt].sort((a, b) => (a.ab < b.ab ? 1 : -1));
       if (!gs.length) out += `<div class="empty">Noch kein Gehalt eingetragen.</div>`;
-      const curG = [...S.gehalt].filter((g) => D(g.ab) <= C.today).sort((a, b) => (a.ab < b.ab ? 1 : -1))[0];
-      for (const g of gs) out += `<button class="row tap chev" data-act="edit" data-ent="gehalt" data-id="${h(g.id)}"><div class="main"><div class="t">ab ${fd(D(g.ab))} ${g === curG ? '<span class="tag acc">aktuell</span>' : D(g.ab) > C.today ? '<span class="tag">künftig</span>' : ''}</div><div class="s">${g.brutto ? 'Brutto ' + fmt(num(g.brutto)) + ' · ' : ''}${h(g.notiz || '')}</div></div><div class="r num" style="font-weight:600">${fmt(num(g.netto))}</div></button>`;
+      for (const g of gs) out += `<button class="row tap" data-act="edit" data-ent="gehalt" data-id="${h(g.id)}">${UI.icon(UI.visual('Gehalt', 'Gehalt'))}<div class="main"><div class="t">ab ${fd(D(g.ab))} ${g === curG ? '<span class="tag acc">aktuell</span>' : D(g.ab) > C.today ? '<span class="tag">künftig</span>' : ''}</div><div class="s">${g.brutto ? 'Brutto ' + fmt(num(g.brutto)) + ' · ' : ''}${h(g.notiz || '')}</div></div><div class="r amt num">${fmt(num(g.netto))}</div></button>`;
       out += `</div><div class="foot">Es gilt immer die letzte Zeile, deren Datum erreicht ist. <a href="https://www.brutto-netto-rechner.info/" target="_blank" rel="noopener" style="color:var(--accent)">Brutto-Netto-Rechner</a></div>`;
-      out += `<h2>Weitere Einnahmen <button data-act="new" data-ent="einnahmen">+ Neu</button></h2><div class="card">`;
+      out += `<h2>Weitere Einnahmen<button data-act="new" data-ent="einnahmen">+ Neu</button></h2><div class="card">`;
       if (!C.P.einnahmen.length) out += `<div class="empty">Keine weiteren Einnahmen.</div>`;
       for (const e of C.P.einnahmen) {
         const ended = e.bis && e.bis < C.today;
         const rn = e.bisRate ? (C.P.raten.find((r) => r.id === e.bisRate) || {}).bez : null;
-        out += `<button class="row tap chev ${ended ? 'dim' : ''}" data-act="edit" data-ent="einnahmen" data-id="${h(e.id)}"><div class="main"><div class="t">${h(e.bez)}</div><div class="s">${h(e.rhythmus)}${e.tag ? ` · am ${e.tag}.` : ''}${e.bis ? ` · bis ${fd(e.bis)}` : ''}${rn ? ` (endet mit ${h(rn)})` : ''}</div></div><div class="r num pos">${fmt(num(e.betrag))}</div></button>`;
+        out += `<button class="row tap ${ended ? 'dim' : ''}" data-act="edit" data-ent="einnahmen" data-id="${h(e.id)}">${UI.icon(visEin(e))}<div class="main"><div class="t">${h(e.bez)}</div><div class="s">${h(e.rhythmus.toLowerCase())}${e.tag ? ` · am ${e.tag}.` : ''}${e.bis ? ` · bis ${fmy(e.bis)}` : ''}${rn ? ` (mit ${h(rn)})` : ''}</div></div><div class="r amt num pos">+${fmt(num(e.betrag))}</div></button>`;
       }
-      out += `</div><h2>Sonderzahlungen <button data-act="new" data-ent="sonder">+ Neu</button></h2><div class="card">`;
+      out += `</div><h2>Sonderzahlungen<button data-act="new" data-ent="sonder">+ Neu</button></h2><div class="card">`;
       if (!S.sonder.length) out += `<div class="empty">z. B. Urlaubs-/Weihnachtsgeld – nur eintragen, wenn sicher.</div>`;
-      for (const x of [...S.sonder].sort((a, b) => (a.monat > b.monat ? 1 : -1))) out += `<button class="row tap chev" data-act="edit" data-ent="sonder" data-id="${h(x.id)}"><div class="main"><div class="t">${h(x.bez || 'Sonderzahlung')}</div><div class="s">${fm(D(x.monat))}</div></div><div class="r num pos">${fmt(num(x.betrag))}</div></button>`;
+      for (const x of [...S.sonder].sort((a, b) => (a.monat > b.monat ? 1 : -1))) out += `<button class="row tap" data-act="edit" data-ent="sonder" data-id="${h(x.id)}">${UI.icon(UI.visual('Sonder', ''))}<div class="main"><div class="t">${h(x.bez || 'Sonderzahlung')}</div><div class="s">${fm(D(x.monat))}</div></div><div class="r amt num pos">+${fmt(num(x.betrag))}</div></button>`;
       out += `</div>`;
     }
     return out;
@@ -312,37 +380,46 @@
     if (v === 'backup') return viewBackup();
     if (v === 'hilfe') return viewHilfe();
     const lb = S.meta && S.meta.lastBackup ? Math.floor((Date.now() - S.meta.lastBackup) / 864e5) : null;
-    const item = (k, t, s) => `<button class="row tap chev" data-act="mehr" data-v="${k}"><div class="main"><div class="t">${t}</div>${s ? `<div class="s">${s}</div>` : ''}</div></button>`;
-    return `<div class="top"><h1>Mehr</h1></div>
-      ${lb == null || lb > 14 ? `<button class="banner warn" data-act="mehr" data-v="backup">💾 <span>${lb == null ? 'Noch keine Datensicherung' : `Letzte Sicherung vor ${lb} Tagen`} – jetzt sichern</span></button>` : ''}
-      <div class="card">${item('topf', 'Rücklagen-Topf', `Stand Monatsende ${fmt(C.topf.rows[0] ? C.topf.rows[0].stand : 0)} · ${C.topf.diff < 0 ? '⚠ Sparrate zu niedrig' : '✔ Sparrate reicht'}`)}
-      ${item('plan', 'Monatsplanung', '8 Jahre Vorschau')}
-      ${item('buchungen', 'Alle Buchungen', `${S.buchungen.length} erfasst`)}</div>
-      <div class="card">${item('einstellungen', 'Einstellungen', 'Dispo, Gehaltstag, Puffer, Kategorien')}
-      ${item('backup', 'Datensicherung', lb == null ? 'Export / Import' : `zuletzt vor ${lb} ${lb === 1 ? 'Tag' : 'Tagen'}`)}
-      ${item('hilfe', 'So funktioniert’s', '')}</div>`;
+    const item = (k, ic, col, t, s) => `<button class="row tap chev" data-act="mehr" data-v="${k}">${UI.icon({ color: col, icon: ic }, 'sq')}<div class="main"><div class="t">${t}</div>${s ? `<div class="s">${s}</div>` : ''}</div></button>`;
+    const T = C.topf;
+    return `<div class="top"><div><div class="eyebrow">Werkzeuge</div><h1>Mehr</h1></div></div>
+      ${lb == null || lb > 14 ? `<button class="banner warn" data-act="mehr" data-v="backup">${UI.svg('save', 'class="bi"')}<span>${lb == null ? 'Noch keine Datensicherung' : `Letzte Sicherung vor ${lb} Tagen`} – jetzt sichern</span></button>` : ''}
+      <button class="card topfcard tap" data-act="mehr" data-v="topf">${UI.icon({ color: '#8b5cf6', icon: 'vault' })}<div class="main"><div class="l">Rücklagen-Topf</div><div class="big num">${fmt(T.rows[0] ? T.rows[0].stand : 0)}</div><div class="s">${T.min < 0 ? '⚠ rutscht ins Minus' : T.diff < 0 ? '⚠ Sparrate zu niedrig' : '✔ Sparrate reicht'} · ${fmt(T.ist)}/Monat</div></div>
+        <div class="spark">${UI.area(T.rows.slice(0, 12).map((x) => [x.m, x.stand]), { id: 'sp', color: '#8b5cf6' })}</div></button>
+      <div class="card" style="margin-top:14px">${item('plan', 'chart', '#0ea5e9', 'Monatsplanung', '8 Jahre Vorschau')}
+      ${item('buchungen', 'list', '#1fa36a', 'Alle Buchungen', `${S.buchungen.length} erfasst`)}</div>
+      <div class="card">${item('einstellungen', 'gear', '#8a8f98', 'Einstellungen', 'Dispo, Gehaltstag, Puffer, Kategorien')}
+      ${item('backup', 'save', '#3b82f6', 'Datensicherung', lb == null ? 'Export / Import' : `zuletzt vor ${lb} ${lb === 1 ? 'Tag' : 'Tagen'}`)}
+      ${item('hilfe', 'help', '#f06a35', 'So funktioniert’s', '')}</div>`;
   }
   const backTop = (title, right = '') => `<div class="top"><div><button class="back" data-act="mehr" data-v="">‹ Mehr</button><h1>${title}</h1></div>${right}</div>`;
 
   function viewTopf() {
     const T = C.topf;
     let out = backTop('Rücklagen-Topf', `<button class="pill" data-act="einstellung" data-f="topfStart">Startbestand</button>`);
-    const status = T.min < 0 ? ['bad', '⚠ Der Topf rutscht ins Minus – Sparrate erhöhen oder Startbestand einzahlen.'] : T.diff < 0 ? ['warn', '⚠ Sparrate liegt unter dem Jahresbedarf – auf Dauer reicht es nicht.'] : ['good', '✔ Die Sparrate deckt alle Zahlungen.'];
-    out += `<div class="banner ${status[0]}">${status[1]}</div><div class="card">
-      <div class="kv"><span class="k">Startbestand (${fms(som(D(S.planStart)))})</span><span class="v">${money(num(S.topfStart), false)}</span></div>
-      <div class="kv"><span class="k">Jahresbedarf</span><span class="v num">${fmt(T.bedarf)}</span></div>
-      <div class="kv"><span class="k">Nötige Sparrate / Monat</span><span class="v num">${fmt(T.noetig)}</span></div>
-      <div class="kv"><span class="k">Aktuelle Sparrate / Monat</span><span class="v num">${fmt(T.ist)}</span></div>
-      <div class="kv"><span class="k">Differenz / Monat</span><span class="v">${money(T.diff)}</span></div>
-      <div class="kv total"><span class="k">Niedrigster Stand (12 Monate)</span><span class="v">${money(T.min)}</span></div></div>
-      <h2>Verlauf</h2><div class="card"><table class="t"><thead><tr><th>Monat</th><th>Rein</th><th>Raus</th><th>Stand</th></tr></thead><tbody>`;
-    for (const r of T.rows.slice(0, 36)) out += `<tr><td>${fms(r.m)}${r.details.length ? `<small>${h(r.details.map((d) => d[0]).join(', '))}</small>` : ''}</td><td>${fmt(r.einzahlung)}</td><td>${r.faellig ? fmt(-r.faellig) : '–'}</td><td class="${sign(r.stand)}"><b>${fmt(r.stand)}</b></td></tr>`;
-    return out + `</tbody></table></div><div class="foot">Kosten mit „Bezahlt über: Sparkonto“ laufen über diesen Topf, die Sparrate (Typ „Rücklage“) füllt ihn.</div>`;
+    const status = T.min < 0 ? ['bad', 'Der Topf rutscht ins Minus – Sparrate erhöhen oder Startbestand einzahlen.'] : T.diff < 0 ? ['warn', 'Sparrate liegt unter dem Jahresbedarf – auf Dauer reicht es nicht.'] : ['good', 'Die Sparrate deckt alle Zahlungen.'];
+    const pts = T.rows.slice(0, 24);
+    const minR = pts.slice(0, 12).reduce((a, x) => (x.stand < a.stand ? x : a), pts[0]);
+    out += `<div class="banner ${status[0]}">${UI.svg(status[0] === 'good' ? 'shield' : 'help', 'class="bi"')}<span>${status[1]}</span></div>
+      <div class="card chart"><div class="ch-head"><div><span>Stand ${fms(pts[0].m)}</span><b class="num">${fmt(pts[0].stand)}</b></div><div class="r"><span>Tiefster (12 Mon.)</span><b class="num ${minR.stand < 0 ? 'neg' : ''}">${fmt(minR.stand)}</b></div></div>
+      ${UI.area(pts.map((x) => [x.m, x.stand]), { id: 'tp', color: '#8b5cf6', limit: 0, limitLabel: '0 €', mark: [minR.m, minR.stand, fms(minR.m)], xLabels: [[pts[0].m, fms(pts[0].m), 'start'], [pts[12].m, fms(pts[12].m)], [pts[23].m, fms(pts[23].m), 'end']] })}</div>
+      <div class="grid2">
+      <div class="tile"><div class="l">Jahresbedarf</div><div class="v num">${fmt(T.bedarf)}</div></div>
+      <div class="tile"><div class="l">Startbestand</div><div class="v num">${fmt(num(S.topfStart))}</div></div>
+      <div class="tile"><div class="l">Nötige Sparrate</div><div class="v num">${fmt(T.noetig)}</div></div>
+      <div class="tile"><div class="l">Aktuelle Sparrate</div><div class="v num">${fmt(T.ist)}</div><div class="s ${T.diff < 0 ? 'neg' : 'pos'}">${plus(T.diff)} / Monat</div></div></div>
+      <h2>Fällige Zahlungen</h2><div class="card">`;
+    for (const r of T.rows.slice(0, 24).filter((x) => x.faellig > 0)) {
+      out += `<div class="row">${UI.icon({ color: '#8b5cf6', icon: 'calendar' })}<div class="main"><div class="t">${fm(r.m)}</div><div class="s">${h(r.details.map((d) => d[0]).join(', '))}</div></div><div class="r"><div class="amt num">${fmt(-r.faellig)}</div><div class="s num">Stand ${fmt(r.stand)}</div></div></div>`;
+    }
+    return out + `</div><div class="foot">Kosten mit „Bezahlt über: Sparkonto“ laufen über diesen Topf, die Sparrate (Typ „Rücklage“) füllt ihn.</div>`;
   }
 
   function viewPlan() {
     let out = backTop('Monatsplanung', `<button class="pill" data-act="einstellung" data-f="planStart">Start</button>`);
-    out += `<div class="card"><table class="t"><thead><tr><th>Monat</th><th>Einn.</th><th>Ausg.</th><th>Frei</th><th>Konto v. G.</th></tr></thead><tbody>`;
+    const w = C.plan.slice(0, 24);
+    out += `<div class="card chart">${UI.bars(w.map((x) => ({ label: MON[ymd(x.m).m - 1][0], v: x.frei, key: x.m, on: x.m === som(C.today) })), { fmt })}<div class="ch-foot">Frei verfügbar · ${fms(w[0].m)} – ${fms(w[w.length - 1].m)}</div></div>`;
+    out += `<h2>Alle Monate</h2><div class="card"><table class="t"><thead><tr><th>Monat</th><th>Einn.</th><th>Ausg.</th><th>Frei</th><th>Konto v. G.</th></tr></thead><tbody>`;
     const cur = som(C.today);
     for (const r of C.plan) out += `<tr class="${r.m === cur ? 'cur' : ''}" data-act="mon-set" data-m="${r.m}"><td>${fms(r.m)}${r.ereignisse.length ? `<small>${h(r.ereignisse.join(' · '))}</small>` : ''}</td><td>${fmt(r.einnahmen)}</td><td>${fmt(r.ausgaben)}</td><td class="${sign(r.frei)}">${fmt(r.frei)}</td><td class="${r.kontoVorGehalt != null && r.kontoVorGehalt < -C.K.KDispo ? 'neg' : ''}">${r.kontoVorGehalt == null ? '' : fmt(r.kontoVorGehalt)}</td></tr>`;
     return out + `</tbody></table></div><div class="foot">Ausgaben = Fixkosten (Giro) + Raten + Rücklage + variable Budgets. Tippe auf einen Monat für die Details.</div>`;
@@ -352,36 +429,36 @@
     let out = backTop('Buchungen', `<button class="pill" data-act="add">+ Neu</button>`);
     const list = [...S.buchungen].sort((a, b) => (a.datum < b.datum ? 1 : a.datum > b.datum ? -1 : 0));
     if (!list.length) return out + `<div class="card"><div class="empty">Noch nichts erfasst. Tippe unten auf ＋.</div></div>`;
-    let curM = null;
     const KD = C.K.KDatum;
+    let curD = null;
     for (const b of list) {
-      const d = D(b.datum), m = som(d);
-      if (m !== curM) {
-        if (curM != null) out += `</div>`;
-        const sum = list.filter((x) => som(D(x.datum)) === m).reduce((a, x) => a + num(x.betrag), 0);
-        out += `<h2>${fm(m)}<span class="num" style="text-transform:none">${fmt(sum)}</span></h2><div class="card">`; curM = m;
+      const d = D(b.datum);
+      if (d !== curD) {
+        if (curD != null) out += `</div>`;
+        const sum = list.filter((x) => x.datum === b.datum).reduce((a, x) => a + num(x.betrag), 0);
+        out += `<div class="dayhdr"><span>${dayLabel(d)}${ymd(d).y !== ymd(C.today).y ? ' ' + ymd(d).y : ''}</span><span class="num">${fmt(-sum)}</span></div><div class="card">`; curD = d;
       }
-      const kb = b.kat ? C.P.kosten.find((x) => x.id === b.kat) : null;
+      const kb = b.kat ? kostenById(b.kat) : null;
       const pending = !b.gebucht && d >= KD;
-      out += `<button class="row tap" data-act="edit" data-ent="buchungen" data-id="${h(b.id)}"><div class="date"><b>${ymd(d).d}</b><span>${WD[E.weekday(d)]}</span></div>
-        <div class="main"><div class="t">${h(b.bez || (kb ? kb.bez : 'Ausgabe'))}</div><div class="s">${kb ? h(kb.bez) : 'ohne Budget'}${pending ? ' · <span class="tag acc">offen</span>' : ''}</div></div>
-        <div class="r num ${num(b.betrag) < 0 ? 'pos' : ''}" style="font-weight:600">${fmt(-num(b.betrag))}</div></button>`;
+      out += `<button class="row tap" data-act="edit" data-ent="buchungen" data-id="${h(b.id)}">${UI.icon(visBuchung(b))}
+        <div class="main"><div class="t">${h(b.bez || (kb ? kb.bez : 'Ausgabe'))}</div><div class="s">${kb ? h(kb.bez) : num(b.betrag) < 0 ? 'Eingang' : 'ohne Budget'}${pending ? ' · <span class="tag acc">offen</span>' : ''}</div></div>
+        <div class="r amt num ${num(b.betrag) < 0 ? 'pos' : ''}">${plus(-num(b.betrag))}</div></button>`;
     }
     return out + `</div>`;
   }
 
   function viewEinstellungen() {
     const k = S.konto;
-    const item = (f, t, v) => `<button class="row tap chev" data-act="einstellung" data-f="${f}"><div class="main"><div class="t">${t}</div></div><div class="r muted">${v}</div></button>`;
+    const item = (f, ic, col, t, v) => `<button class="row tap chev" data-act="einstellung" data-f="${f}">${UI.icon({ color: col, icon: ic }, 'sq')}<div class="main"><div class="t">${t}</div></div><div class="r muted">${v}</div></button>`;
     return backTop('Einstellungen') + `<div class="card">
-      ${item('dispo', 'Dispo-Rahmen', fmt(num(k.dispo)))}
-      ${item('gehaltstag', 'Gehaltseingang am', `${k.gehaltstag}.`)}
-      ${item('puffer', 'Sicherheitspuffer', fmt(num(k.puffer)))}</div><div class="foot">Gehaltstag: fällt er aufs Wochenende/Feiertag, zählt der Werktag davor. Der Puffer bleibt immer unangetastet.</div>
+      ${item('dispo', 'bank', '#e5484d', 'Dispo-Rahmen', fmt(num(k.dispo)))}
+      ${item('gehaltstag', 'briefcase', '#0ea5e9', 'Gehaltseingang am', `${k.gehaltstag}.`)}
+      ${item('puffer', 'shield', '#1fa36a', 'Sicherheitspuffer', fmt(num(k.puffer)))}</div><div class="foot">Gehaltstag: fällt er aufs Wochenende/Feiertag, zählt der Werktag davor. Der Puffer bleibt immer unangetastet.</div>
       <h2>Planung</h2><div class="card">
-      ${item('planStart', 'Planungsstart', fm(som(D(S.planStart))))}
-      ${item('topfStart', 'Topf-Startbestand', fmt(num(S.topfStart)))}
-      ${item('budgetModus', 'Budget-Berechnung', S.budgetModus === 'anteilig' ? 'anteilig (wie Excel)' : 'nach Erfassung')}
-      ${item('kategorien', 'Kategorien', S.kategorien.length)}</div>
+      ${item('planStart', 'calendar', '#5b6cf0', 'Planungsstart', fm(som(D(S.planStart))))}
+      ${item('topfStart', 'vault', '#8b5cf6', 'Topf-Startbestand', fmt(num(S.topfStart)))}
+      ${item('budgetModus', 'chart', '#f0a020', 'Budget-Berechnung', S.budgetModus === 'anteilig' ? 'anteilig' : 'nach Erfassung')}
+      ${item('kategorien', 'tag', '#8a8f98', 'Kategorien', S.kategorien.length)}</div>
       <div class="foot">Budget-Berechnung „nach Erfassung“: Restbudget = Monatsbudget minus deine erfassten Ausgaben im Gehaltszyklus. „Anteilig“: Budget wird nach verbleibenden Tagen gerechnet – wie im Excel.</div>`;
   }
 
@@ -399,17 +476,15 @@
 
   function viewHilfe() {
     const p = [
-      '<b>Unterwegs:</b> Auf ＋ tippen, Betrag eingeben, Budget wählen, fertig. Die Ausgabe zählt sofort als vorgemerkt und verringert „Frei bis zum Gehalt“ und das Budget.',
-      '<b>Kontostand aktualisieren:</b> Kontostand laut Bank (Minus-Schalter bei negativem Stand) + Datum. Erfasste Ausgaben mit älterem Datum fallen dann automatisch raus – sie sind ja schon im Kontostand. Für Ausgaben von heute, die schon gebucht sind: in der Buchung „Schon im Kontostand“ einschalten.',
-      '<b>Frei bis zum Gehalt</b> = was du bis zum nächsten Gehalt für Essen, Tanken & Co. ausgeben kannst, ohne die Dispo-Grenze (minus Puffer) zu reißen – auch wenn du alles sofort ausgibst.',
-      '<b>Neue Kosten:</b> Posten → Kosten → + Neu. Vierteljährlich/Halbjährlich/Jährlich: „Fällig im Monat“ = Monat der (ersten) Abbuchung. Einmalig: Datum bei „Gültig ab“.',
-      '<b>Vertrag gekündigt?</b> „Gültig bis“ eintragen statt zu löschen – die Vorschau stimmt dann weiterhin.',
-      '<b>Neue Rate:</b> Posten → Raten. Monatsrate, Raten gesamt, bereits bezahlt, nächste Abbuchung – der Rest rechnet sich.',
-      '<b>Bezahlt über Sparkonto</b> = läuft über den Rücklagen-Topf, nicht übers Girokonto.',
-      '<b>Gehalt geändert?</b> Posten → Einnahmen → Gehalt → + Neu mit „Gültig ab“.',
-      '<b>Feiertage</b> (bundesweit) werden automatisch für jedes Jahr berechnet – Buchungen am Wochenende/Feiertag werden auf den nächsten Werktag verschoben.',
+      ['in', '#1fa36a', 'Unterwegs', 'Auf ＋ tippen, Betrag eingeben, Budget wählen, fertig. Die Ausgabe zählt sofort als vorgemerkt und verringert „Frei bis zum Gehalt“ und das Budget.'],
+      ['wallet', '#3b82f6', 'Kontostand aktualisieren', 'Kontostand laut Bank (Minus-Schalter bei negativem Stand) + Datum. Erfasste Ausgaben mit älterem Datum fallen dann automatisch raus. Für Ausgaben von heute, die schon gebucht sind: in der Buchung „Schon im Kontostand“ einschalten.'],
+      ['shield', '#5b6cf0', 'Frei bis zum Gehalt', 'Was du bis zum nächsten Gehalt für Essen, Tanken & Co. ausgeben kannst, ohne die Dispo-Grenze (minus Puffer) zu reißen – auch wenn du alles sofort ausgibst.'],
+      ['list', '#f06a35', 'Neue Kosten', 'Posten → Kosten → Neu. Vierteljährlich/Halbjährlich/Jährlich: „Fällig im Monat“ = Monat der (ersten) Abbuchung. Einmalig: Datum bei „Gültig ab“. Gekündigt? „Gültig bis“ eintragen statt löschen.'],
+      ['card', '#e5484d', 'Neue Rate', 'Posten → Raten. Monatsrate, Raten gesamt, bereits bezahlt, nächste Abbuchung – der Rest rechnet sich.'],
+      ['vault', '#8b5cf6', 'Sparkonto', '„Bezahlt über Sparkonto“ läuft über den Rücklagen-Topf, nicht übers Girokonto.'],
+      ['calendar', '#0ea5e9', 'Feiertage', 'Bundesweite Feiertage werden automatisch berechnet – Buchungen am Wochenende/Feiertag rutschen auf den nächsten Werktag.'],
     ];
-    return backTop('So funktioniert’s') + `<div class="card pad">${p.map((x) => `<p style="margin:0 0 12px">${x}</p>`).join('')}</div>`;
+    return backTop('So funktioniert’s') + `<div class="card">${p.map(([ic, c, t, x]) => `<div class="row" style="align-items:flex-start">${UI.icon({ color: c, icon: ic }, 'sq')}<div class="main"><div class="t" style="font-weight:600;white-space:normal">${t}</div><div class="s" style="white-space:normal;font-size:14px">${x}</div></div></div>`).join('')}</div>`;
   }
 
   // ---------- Formulare ----------
@@ -507,7 +582,7 @@
     const budgets = S.kosten.filter((k) => k.typ === 'Variabel');
     let sel = kat !== undefined ? kat : (ui.lastKat && budgets.some((b) => b.id === ui.lastKat) ? ui.lastKat : (budgets[0] || {}).id || '');
     const bl = C.K.budgetListe;
-    const chips = () => budgets.map((b) => { const x = bl.find((y) => y.id === b.id); return `<button type="button" class="chip ${sel === b.id ? 'on' : ''}" data-kat="${h(b.id)}">${h(b.bez)}${x && x.budget > 0 ? `<small>${fmt(x.rest)}</small>` : ''}</button>`; }).join('') + `<button type="button" class="chip ${!sel ? 'on' : ''}" data-kat="">Ohne Budget</button>`;
+    const chips = () => budgets.map((b) => { const x = bl.find((y) => y.id === b.id); const v = UI.visual(b.kat, b.bez); return `<button type="button" class="chip ${sel === b.id ? 'on' : ''}" style="--c:${v.color}" data-kat="${h(b.id)}">${UI.icon(v, 'xs')}<span>${h(b.bez)}${x && x.budget > 0 ? `<small>noch ${fmt(x.rest)}</small>` : ''}</span></button>`; }).join('') + `<button type="button" class="chip ${!sel ? 'on' : ''}" style="--c:#8a8f98" data-kat="">${UI.icon(UI.visual('Sonstiges', ''), 'xs')}<span>Ohne Budget</span></button>`;
     const body = `<form id="frm" autocomplete="off">
       <div class="amount"><input id="amt" inputmode="decimal" placeholder="0,00" enterkeyhint="done"><span>€</span></div>
       <div class="chips" id="chips">${chips()}</div>
