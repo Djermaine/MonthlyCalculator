@@ -87,11 +87,16 @@
   }
 
   // Fortschrittsring 0..1
-  function ring(p, color, size = 64, stroke = 7, center = '') {
+  function ring(p, color, size = 64, stroke = 7, center = '', marker = null) {
     const r = (size - stroke) / 2, C = 2 * Math.PI * r, v = Math.max(0, Math.min(1, p)) * C;
+    let mk = '';
+    if (marker != null) {
+      const a = Math.max(0, Math.min(1, marker)) * 2 * Math.PI - Math.PI / 2;
+      mk = `<circle class="mk" cx="${fx(size / 2 + r * Math.cos(a))}" cy="${fx(size / 2 + r * Math.sin(a))}" r="${fx(stroke / 2 + 1)}" fill="var(--card)" stroke="var(--text)" stroke-width="1.6"/>`;
+    }
     return `<div class="ring" style="width:${size}px;height:${size}px"><svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
       <circle cx="${size / 2}" cy="${size / 2}" r="${fx(r)}" fill="none" stroke="var(--track)" stroke-width="${stroke}"/>
-      <circle cx="${size / 2}" cy="${size / 2}" r="${fx(r)}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${fx(v)} ${fx(C)}" transform="rotate(-90 ${size / 2} ${size / 2})"/></svg><div class="ring-c">${center}</div></div>`;
+      <circle cx="${size / 2}" cy="${size / 2}" r="${fx(r)}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${fx(v)} ${fx(C)}" transform="rotate(-90 ${size / 2} ${size / 2})"/>${mk}</svg><div class="ring-c">${center}</div></div>`;
   }
 
   // Säulen. items: [{label, v, key, on}] – positive grün, negative rot; antippbar via data-act/data-m
@@ -107,7 +112,7 @@
       s += `<g data-act="${act}" data-m="${it.key}" style="cursor:pointer"><rect x="${fx(cx - W / n / 2)}" y="0" width="${fx(W / n)}" height="${H}" fill="transparent"/>
         <rect x="${fx(cx - bw / 2)}" y="${fx(top)}" width="${fx(bw)}" height="${fx(hgt)}" rx="4" fill="${col}" opacity="${it.on ? 1 : 0.38}"/>
         <text x="${fx(cx)}" y="${H - 5}" text-anchor="middle" class="${it.on ? 'on' : ''}">${it.label}</text>
-        ${it.on ? `<text x="${fx(cx)}" y="${fx(it.v >= 0 ? top - 5 : top + hgt + 12)}" text-anchor="${i < 2 ? 'start' : i > n - 3 ? 'end' : 'middle'}" class="val">${fmt(it.v)}</text>` : ''}</g>`;
+        ${it.on ? `<text x="${fx(cx)}" y="${fx(top - 5)}" text-anchor="${i < 2 ? 'start' : i > n - 3 ? 'end' : 'middle'}" class="val">${fmt(it.v)}</text>` : ''}</g>`;
     });
     return s + '</svg>';
   }

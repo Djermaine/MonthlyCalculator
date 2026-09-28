@@ -302,3 +302,48 @@ table.t td small { color: var(--muted); display: block; font-size: 11px; white-s
 .chip.on .ic { background: rgba(255,255,255,.25); }
 .monthnav .lbl { display: inline-flex; align-items: center; gap: 6px; }
 .timeline .row { padding-top: 13px; padding-bottom: 13px; }
+
+/* ===== v4: Bewegung, Tempo, Insights ===== */
+.bc-foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+.pace { font-size: 11.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.pace.ok { background: var(--pos-soft); color: var(--pos); }
+.pace.warn { background: var(--warn-soft); color: var(--warn); }
+.pace.bad { background: var(--neg-soft); color: var(--neg); }
+.bcard { flex-basis: 196px; }
+.icard { scroll-snap-align: start; flex: 0 0 210px; border-radius: 18px; padding: 14px; position: relative; overflow: hidden;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--c) 16%, var(--card)), var(--card) 70%); box-shadow: var(--shadow); }
+.icard::after { content: ""; position: absolute; right: -30px; top: -30px; width: 90px; height: 90px; border-radius: 50%; background: var(--c); opacity: .08; }
+.ic-top { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.ic-v { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin-top: 10px; }
+.ic-s { font-size: 12.5px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-grab { width: 38px; height: 5px; border-radius: 3px; background: var(--line); margin: 8px auto 0; flex: none; }
+.sh-head { padding-top: 8px; touch-action: none; }
+.ring .mk { transition: none; }
+
+@media (prefers-reduced-motion: no-preference) {
+  #view.anim > * { animation: fadeUp .5s cubic-bezier(.2,.8,.2,1) both; }
+  #view.anim > *:nth-child(2) { animation-delay: .04s; } #view.anim > *:nth-child(3) { animation-delay: .08s; }
+  #view.anim > *:nth-child(4) { animation-delay: .12s; } #view.anim > *:nth-child(5) { animation-delay: .16s; }
+  #view.anim > *:nth-child(6) { animation-delay: .2s; } #view.anim > *:nth-child(7) { animation-delay: .24s; }
+  #view.anim > *:nth-child(8) { animation-delay: .28s; } #view.anim > *:nth-child(n+9) { animation-delay: .32s; }
+  #view.anim.slide-l > * { animation-name: slideL; animation-duration: .35s; animation-delay: 0s !important; }
+  #view.anim.slide-r > * { animation-name: slideR; animation-duration: .35s; animation-delay: 0s !important; }
+  #view.anim .ring circle:nth-of-type(2), #view.anim .donut circle ~ circle { animation: draw 1s cubic-bezier(.3,.8,.2,1) both .15s; }
+  #view.anim .bar i, #view.anim .lg-bar i, #view.anim .hg-track i, #view.anim .cf-bar i { animation: growx .9s cubic-bezier(.3,.8,.2,1) both .2s; }
+  #view.anim .stack { animation: reveal .9s cubic-bezier(.3,.8,.2,1) both .15s; }
+  #view.anim svg.area { animation: reveal 1.1s cubic-bezier(.4,.6,.2,1) both .15s; }
+  #view.anim svg.bars rect[rx] { animation: growy .7s cubic-bezier(.3,.8,.2,1) both .15s; transform-box: fill-box; transform-origin: 50% 100%; }
+  .tap, .bcard, .tile, .icard, #tabbar button, .btn, .chip, .pill { transition: transform .15s ease; }
+  .tap:active, .bcard:active, button.tile:active, .btn:active, .chip:active, .pill:active { transform: scale(.97); }
+  #tabbar .add span { transition: transform .2s cubic-bezier(.3,1.6,.5,1); }
+  #tabbar .add:active span { transform: scale(.88); }
+}
+@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } }
+@keyframes slideL { from { opacity: 0; transform: translateX(28px); } }
+@keyframes slideR { from { opacity: 0; transform: translateX(-28px); } }
+@keyframes draw { from { stroke-dasharray: 0 1000; } }
+@keyframes growx { from { width: 0; } }
+@keyframes growy { from { transform: scaleY(0); } }
+@keyframes reveal { from { clip-path: inset(0 100% 0 0); } }
+.bc-foot span:last-child { white-space: nowrap; font-size: 11.5px; }
+.bcard { flex-basis: 204px; }

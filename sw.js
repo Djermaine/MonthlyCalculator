@@ -1,5 +1,5 @@
 // Offline-Cache. Bei jeder Änderung an der App VERSION erhöhen.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'mtlkosten-' + VERSION;
 const FILES = ['./', 'index.html', 'styles.css', 'engine.js', 'ui.js', 'app.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 

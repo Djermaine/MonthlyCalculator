@@ -80,8 +80,25 @@
     C = E.compute(S);
     if (ui.monat == null) ui.monat = defaultMonat();
     const v = { jetzt: viewJetzt, monat: viewMonat, posten: viewPosten, mehr: viewMehr }[ui.tab]();
-    $('#view').innerHTML = v;
+    const view = $('#view');
+    view.innerHTML = v;
+    if (ui.anim) {
+      const cls = ui.anim === true ? 'anim' : 'anim slide-' + ui.anim;
+      view.className = cls; ui.anim = false;
+      clearTimeout(render.t); render.t = setTimeout(() => (view.className = ''), 1300);
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) countUp(view);
+    }
     for (const b of document.querySelectorAll('#tabbar [data-tab]')) b.classList.toggle('on', b.dataset.tab === ui.tab);
+  }
+
+  // Beträge hochzählen lassen
+  function countUp(root) {
+    for (const el of root.querySelectorAll('[data-count]')) {
+      const to = +el.dataset.count, t0 = performance.now(), dur = 700;
+      const step = (t) => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); el.textContent = fmt(to * e); if (k < 1) requestAnimationFrame(step); };
+      requestAnimationFrame(step);
+      setTimeout(() => (el.textContent = fmt(to)), dur + 80);
+    }
   }
 
   // Aktueller Monat, aber nicht vor dem Planungsstart
@@ -135,7 +152,7 @@
     const dispoUse = K.KDispo > 0 ? Math.max(0, Math.min(1, -K.KStand / K.KDispo)) : 0;
     const neg = K.KFrei < 0;
     out += `<section class="hero-g ${neg ? 'bad' : ''}" data-act="konto">
-      <div class="hg-top"><div class="hg-main"><div class="hg-l">Frei bis zum Gehalt</div><div class="hg-big num">${fmt(K.KFrei)}</div>
+      <div class="hg-top"><div class="hg-main"><div class="hg-l">Frei bis zum Gehalt</div><div class="hg-big num" data-count="${K.KFrei}">${fmt(K.KFrei)}</div>
         <div class="hg-sub">${neg ? 'Dispo-Grenze würde überschritten' : `≈ ${fmt(K.proTag)} pro Tag`}</div></div>
         ${UI.ring(1 - vergangen, 'rgba(255,255,255,.95)', 84, 8, `<b>${K.tageBisGehalt}</b><span>${K.tageBisGehalt === 1 ? 'Tag' : 'Tage'}</span>`)}</div>
       <div class="hg-stats"><div><span>Kontostand</span><b class="num">${fmt(K.KStand)}</b></div><div><span>Verfügbar</span><b class="num">${fmt(K.KStand + K.KDispo)}</b></div><div><span>Nach Budgets</span><b class="num">${fmt(K.KRest)}</b></div></div>
@@ -147,15 +164,36 @@
     // Budgets
     const bl = K.budgetListe.filter((b) => b.budget > 0 || b.ausgegeben > 0);
     out += `<h2>Budgets<button data-act="add">+ Ausgabe</button></h2><div class="hscroll">`;
+    const zyk0 = Math.max(1, K.ZEnde - K.ZStart), soll = Math.min(1, (K.KDatum - K.ZStart + 1) / zyk0);
     for (const b of bl) {
       const k = kostenById(b.id), v = visKosten(k), over = b.rest < -0.004;
       const p = b.budget > 0 ? b.ausgegeben / b.budget : 1;
+      const plan = b.budget * soll, tempo = b.ausgegeben - plan;
+      const paceCls = over ? 'bad' : tempo > 1 ? 'warn' : 'ok';
+      const paceTxt = over ? 'überzogen' : tempo > 1 ? `${fmt(tempo)} über Plan` : 'im Plan';
       out += `<button class="bcard" data-act="add" data-kat="${h(b.id)}">
         <div class="bc-head">${UI.icon(v, 'sm')}<span>${h(b.bez)}</span></div>
-        <div class="bc-body">${UI.ring(p, over ? 'var(--neg)' : v.color, 58, 7, `<small>${b.budget > 0 ? Math.round(p * 100) + '%' : '–'}</small>`)}
-        <div><div class="bc-v num ${over ? 'neg' : ''}">${over ? '−' + fmt(-b.rest) : fmt(b.rest)}</div><div class="bc-s">${over ? 'überzogen' : 'übrig'} · von ${fmt(b.budget)}</div></div></div></button>`;
+        <div class="bc-body">${UI.ring(p, over ? 'var(--neg)' : v.color, 58, 7, `<small>${b.budget > 0 ? Math.round(p * 100) + '%' : '–'}</small>`, b.budget > 0 ? soll : null)}
+        <div><div class="bc-v num ${over ? 'neg' : ''}">${over ? '−' + fmt(-b.rest) : fmt(b.rest)}</div><div class="bc-s">von ${fmt(b.budget)}</div></div></div>
+        <div class="bc-foot"><span class="pace ${paceCls}">${paceTxt}</span><span>${over ? '' : '≈ ' + fmt(Math.max(0, b.rest) / K.tageBisGehalt) + '/Tag'}</span></div></button>`;
     }
     out += `<button class="bcard add" data-act="add">${UI.svg('in', 'style="transform:rotate(180deg)"')}<span>Ausgabe erfassen</span></button></div>`;
+
+    // Insights
+    const ins = [];
+    const frei = C.plan.find((r) => r.kontoVorGehalt != null && r.kontoVorGehalt >= 0);
+    if (K.KStand < 0) {
+      const start = Math.min(K.KVorGehalt - K.KBudgetRest, K.KStand);
+      ins.push({ c: '#1fa36a', i: 'shield', l: 'Dispo ausgeglichen', v: frei ? fm(frei.m) : 'nicht in Sicht', s: frei ? `in ${Math.round((frei.m - som(C.today)) / 30.44)} Monaten · noch ${fmt(-start)}` : 'mit aktuellem Plan nicht in 8 Jahren' });
+    }
+    const nx = K.rows.find((r) => r.status === 'offen' && r.a < 0 && r.src !== 'buchung');
+    if (nx) ins.push({ c: visRow(nx).color, i: visRow(nx).icon, l: 'Nächste Abbuchung', v: fmt(-nx.a), s: `${h(nx.name)} · ${dayLabel(nx.d)}` });
+    const re = C.P.raten.filter((x) => x.offen > 0 && x.letzte != null).sort((a, b) => a.letzte - b.letzte)[0];
+    if (re) ins.push({ c: '#e5484d', i: visRate(re).icon, l: 'Nächste Rate endet', v: '+' + fmt(num(re.rate)), s: `${h(re.bez)} · ab ${fm(re.mehrFreiAb)}` });
+    if (C.zins.satz > 0) ins.push({ c: '#9f1239', i: 'bank', l: 'Dispozinsen 12 Monate', v: '≈ ' + fmt(C.zins.proMonat * 12), s: `Ø ${fmt(C.zins.proMonat)} pro Monat` });
+    if (ins.length) {
+      out += `<h2>Insights</h2><div class="hscroll">${ins.map((x) => `<div class="icard" style="--c:${x.c}"><div class="ic-top">${UI.icon({ color: x.c, icon: x.i }, 'xs')}<span>${x.l}</span></div><div class="ic-v num">${x.v}</div><div class="ic-s">${x.s}</div></div>`).join('')}</div>`;
+    }
 
     // Kontoverlauf bis Gehalt
     const pend = K.rows.filter((r) => r.status !== 'erledigt');
@@ -694,7 +732,7 @@
   // ---------- Sheet & Toast ----------
   let onSave = null;
   function openSheet(title, body, save, saveLabel = 'Fertig') {
-    $('#sheet').innerHTML = `<div class="sh-head"><button data-act="close">Abbrechen</button><b>${h(title)}</b><button class="save" data-act="save">${saveLabel}</button></div><div class="sh-body">${body}</div>`;
+    $('#sheet').innerHTML = `<div class="sh-grab"></div><div class="sh-head"><button data-act="close">Abbrechen</button><b>${h(title)}</b><button class="save" data-act="save">${saveLabel}</button></div><div class="sh-body">${body}</div>`;
     onSave = save;
     $('#sheet').classList.add('on'); $('#scrim').classList.add('on');
     $('#frm') && $('#frm').addEventListener('submit', (e) => { e.preventDefault(); doSave(); });
@@ -759,6 +797,7 @@
       if (t === 'add') return openAdd();
       if (ui.tab === t && t === 'mehr') ui.mehr = null;
       if (ui.tab === t && t === 'monat') ui.monat = defaultMonat();
+      if (ui.tab !== t) ui.anim = true;
       ui.tab = t; render(); window.scrollTo(0, 0); return;
     }
     const a = el.dataset.act;
@@ -784,10 +823,10 @@
       }
       case 'toggle-erledigt': ui.zeigeErledigt = !ui.zeigeErledigt; return render();
       case 'go-monat': ui.tab = 'monat'; ui.monat = C.ausblick ? C.ausblick.monat : defaultMonat(); render(); return window.scrollTo(0, 0);
-      case 'mon': ui.monat = edate(ui.monat, +el.dataset.d); return render();
-      case 'mon-set': ui.tab = 'monat'; ui.monat = +el.dataset.m; render(); return window.scrollTo(0, 0);
-      case 'posten-tab': ui.posten = el.dataset.v; return render();
-      case 'mehr': ui.tab = 'mehr'; ui.mehr = el.dataset.v || null; render(); return window.scrollTo(0, 0);
+      case 'mon': ui.monat = edate(ui.monat, +el.dataset.d); ui.anim = +el.dataset.d > 0 ? 'l' : 'r'; return render();
+      case 'mon-set': ui.anim = true; ui.tab = 'monat'; ui.monat = +el.dataset.m; render(); return window.scrollTo(0, 0);
+      case 'posten-tab': ui.posten = el.dataset.v; ui.anim = true; return render();
+      case 'mehr': ui.anim = true; ui.tab = 'mehr'; ui.mehr = el.dataset.v || null; render(); return window.scrollTo(0, 0);
       case 'einstellung': return openEinstellung(el.dataset.f);
       case 'export': return exportJson();
       case 'export-csv': return exportCsv();
@@ -812,6 +851,29 @@
   $('#tabbar').innerHTML = [['jetzt', 'Jetzt'], ['monat', 'Monat'], ['add', ''], ['posten', 'Posten'], ['mehr', 'Mehr']]
     .map(([k, l]) => (k === 'add' ? `<button class="add" data-tab="add" aria-label="Ausgabe erfassen"><span>${I.add}</span></button>` : `<button data-tab="${k}">${I[k]}<span>${l}</span></button>`)).join('');
 
+  // Gesten: im Monat-Tab seitlich wischen
+  (() => {
+    let x0 = null, y0 = 0;
+    const v = $('#view');
+    v.addEventListener('touchstart', (e) => {
+      if (ui.tab !== 'monat' || e.target.closest('.hscroll, input, .chart')) { x0 = null; return; }
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+    }, { passive: true });
+    v.addEventListener('touchend', (e) => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0; x0 = null;
+      if (Math.abs(dx) > 70 && Math.abs(dy) < 45) { ui.monat = edate(ui.monat, dx < 0 ? 1 : -1); ui.anim = dx < 0 ? 'l' : 'r'; render(); }
+    }, { passive: true });
+  })();
+  // Sheet nach unten ziehen zum Schließen
+  (() => {
+    const sh = $('#sheet'); let y0 = null, dy = 0;
+    sh.addEventListener('touchstart', (e) => { if (!e.target.closest('.sh-grab, .sh-head') || e.target.closest('button')) return; y0 = e.touches[0].clientY; dy = 0; sh.style.transition = 'none'; }, { passive: true });
+    sh.addEventListener('touchmove', (e) => { if (y0 == null) return; dy = Math.max(0, e.touches[0].clientY - y0); sh.style.transform = `translateY(${dy}px)`; }, { passive: true });
+    sh.addEventListener('touchend', () => { if (y0 == null) return; y0 = null; sh.style.transition = ''; sh.style.transform = ''; if (dy > 90) closeSheet(); });
+  })();
+
+  ui.anim = true;
   render();
   if (migrationMsg) toast(migrationMsg);
 
