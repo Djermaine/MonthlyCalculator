@@ -43,9 +43,10 @@
     'Wohnen': ['#5b6cf0', 'home'], 'Energie': ['#f0a020', 'bolt'], 'Kommunikation': ['#11a9b8', 'phone'],
     'Versicherung': ['#3b82f6', 'shield'], 'Mobilität': ['#f06a35', 'car'], 'Abos & Freizeit': ['#e0509a', 'star'],
     'Lebenshaltung': ['#1fa36a', 'cart'], 'Rücklage': ['#8b5cf6', 'vault'], 'Sonstiges': ['#8a8f98', 'tag'],
-    'Rate': ['#e5484d', 'card'], 'Einnahme': ['#16a34a', 'in'], 'Gehalt': ['#0ea5e9', 'briefcase'], 'Sonder': ['#16a34a', 'gift'],
+    'Rate': ['#e5484d', 'card'], 'Bank & Zinsen': ['#9f1239', 'bank'], 'Einnahme': ['#16a34a', 'in'], 'Gehalt': ['#0ea5e9', 'briefcase'], 'Sonder': ['#16a34a', 'gift'],
   };
   const KW = [
+    [/dispo|zins|kontoführ/i, 'bank'],
     [/tank|sprit|benzin|diesel|laden/i, 'fuel'], [/lebensmittel|drogerie|einkauf|supermarkt|rewe|edeka|aldi|lidl/i, 'cart'],
     [/restaurant|essen gehen|imbiss|lieferando|kantine/i, 'food'], [/miete|wohnung/i, 'home'], [/strom|gas|heiz/i, 'bolt'],
     [/internet|wlan|dsl|glasfaser|flatrate/i, 'wifi'], [/handy|iphone|smartphone|mobilfunk/i, 'phone'], [/spotify|musik|music/i, 'music'],

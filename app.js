@@ -31,7 +31,8 @@
   const moneyIn = (v) => (v == null || v === '' ? '' : String(v).replace('.', ','));
 
   // ---------- Zustand ----------
-  let S = load();
+  let migrationMsg = null;
+  let S = migrate(load());
   let C = null;                      // Rechenergebnis
   const ui = { tab: 'jetzt', monat: null, posten: 'kosten', mehr: null, zeigeErledigt: false, lastKat: localStorage.getItem(KEY + '.lastKat') || null };
 
@@ -43,12 +44,23 @@
 
   function emptyState() {
     return {
-      app: 'mtl-kosten', version: 1,
-      konto: { stand: 0, datum: iso(E.todayNum()), dispo: 0, gehaltstag: 28, puffer: 0 },
+      app: 'mtl-kosten', version: 2,
+      konto: { stand: 0, datum: iso(E.todayNum()), dispo: 0, gehaltstag: 28, puffer: 0, dispoZins: 0 },
       budgetModus: 'erfasst', planStart: iso(som(E.todayNum())), topfStart: 0,
       kategorien: ['Wohnen', 'Energie', 'Kommunikation', 'Versicherung', 'Mobilität', 'Abos & Freizeit', 'Lebenshaltung', 'Rücklage', 'Sonstiges'],
       gehalt: [], einnahmen: [], sonder: [], kosten: [], raten: [], buchungen: [],
     };
+  }
+  // Einmalige Ergänzungen bestehender Daten
+  function migrate(s) {
+    if (!s || (s.version || 1) >= 2) return s;
+    s.version = 2;
+    if (s.konto.dispoZins == null) s.konto.dispoZins = 13.026;
+    if (!s.kategorien.includes('Bank & Zinsen')) s.kategorien.push('Bank & Zinsen');
+    if (!s.kosten.some((k) => /kontoführ/i.test(k.bez || ''))) s.kosten.push({ id: uid(), kat: 'Bank & Zinsen', bez: 'Kontoführungsentgelt', betrag: 5.9, rhythmus: 'Monatlich', faellig: null, tag: 31, typ: 'Fixkosten', ueber: 'Girokonto', ab: null, bis: null, notiz: '' });
+    localStorage.setItem(KEY, JSON.stringify(s));
+    migrationMsg = 'Dispozinsen (13,026 %) und Kontoführung (5,90 €) ergänzt';
+    return s;
   }
   function normalize(s) {
     const base = emptyState();
@@ -101,6 +113,7 @@
     if (r.src === 'kosten') { const k = kostenById(r.ref); return k ? visKosten(k) : UI.visual('Sonstiges', r.name); }
     if (r.src === 'rate') return UI.visual('Rate', r.name);
     if (r.src === 'einnahme') return UI.visual('Einnahme', r.name);
+    if (r.src === 'zins') return UI.visual('Bank & Zinsen', 'Zinsen');
     return visBuchung(S.buchungen.find((b) => b.id === r.id) || { kat: r.kat, betrag: -r.a, bez: r.name });
   }
   const dayLabel = (d) => {
@@ -158,6 +171,16 @@
       ${UI.area(pts, { limit: -K.KDispo, limitLabel: 'Dispo-Grenze', id: 'kv', mark: [minP[0], minP[1], fds(minP[0])], xLabels: [[pts[0][0], 'Heute', 'start'], [pts[Math.floor(lastIdx / 2)][0], fds(pts[Math.floor(lastIdx / 2)][0])], [pts[lastIdx][0], 'Gehalt', 'end']] })}
       <div class="ch-foot">inkl. Budgets, gleichmäßig pro Tag verteilt</div></div>`;
 
+    // Dispozinsen
+    const Z = C.zins;
+    if (Z.satz > 0) {
+      const nz = Z.naechste;
+      out += `<h2>Dispozinsen</h2><div class="card"><button class="row tap" ${nz ? `data-act="zins" data-key="${iso(nz.datum)}" data-b="${nz.betrag}"` : ''}>${UI.icon(UI.visual('Bank & Zinsen', 'Zinsen'))}
+        <div class="main"><div class="t">Ø ${fmt(Z.proMonat)} pro Monat</div><div class="s">${String(+Z.satz.toFixed(3)).replace('.', ',')} % p. a.${nz ? ` · ${fds(nz.datum)} ${nz.ist ? 'laut Bank' : 'geschätzt'}` : ''}</div></div>
+        <div class="r"><div class="amt num neg">${nz ? fmt(-nz.betrag) : ''}</div><div class="s">${nz ? 'Q' + nz.quartal : ''}</div></div></button></div>
+        <div class="foot">Taggenau geschätzt aus der Kontostand-Prognose, abgebucht am letzten Werktag jedes Quartals. Kennst du den echten Betrag, tippe die Zeile an.</div>`;
+    }
+
     // Kennzahlen
     const A = C.ausblick;
     out += `<div class="grid2">
@@ -185,10 +208,10 @@
         const daySum = rows.filter((x) => x.d === r.d).reduce((a, x) => a + x.a, 0);
         out += `<div class="dayhdr"><span>${dayLabel(r.d)}</span><span class="num">${plus(daySum)}</span></div><div class="card">`; curD = r.d;
       }
-      const erl = r.status === 'erledigt', tap = r.src === 'buchung';
-      const sub = [r.status === 'vorgemerkt' ? '<span class="tag acc">vorgemerkt</span>' : erl ? '<span class="tag">✔ erledigt</span>' : r.src === 'rate' ? 'Rate' : r.src === 'einnahme' ? 'Eingang' : h((kostenById(r.ref) || {}).kat || ''),
+      const erl = r.status === 'erledigt', tap = r.src === 'buchung' || r.src === 'zins';
+      const sub = [r.status === 'vorgemerkt' ? '<span class="tag acc">vorgemerkt</span>' : erl ? '<span class="tag">✔ erledigt</span>' : r.src === 'zins' ? (r.ist ? '<span class="tag acc">laut Bank</span>' : '<span class="tag warn">geschätzt · antippen</span>') : r.src === 'rate' ? 'Rate' : r.src === 'einnahme' ? 'Eingang' : h((kostenById(r.ref) || {}).kat || ''),
         r.verschoben ? `<span class="tag warn">von ${fds(r.nd)}</span>` : ''].filter(Boolean).join(' ');
-      out += `<div class="row ${erl ? 'dim' : ''} ${tap ? 'tap' : ''}" ${tap ? `data-act="edit" data-ent="buchungen" data-id="${h(r.id)}"` : ''}>
+      out += `<div class="row ${erl ? 'dim' : ''} ${tap ? 'tap' : ''}" ${r.src === 'zins' ? `data-act="zins" data-key="${r.zinsKey}" data-b="${-r.a}"` : tap ? `data-act="edit" data-ent="buchungen" data-id="${h(r.id)}"` : ''}>
         ${UI.icon(visRow(r))}<div class="main"><div class="t">${h(r.name)}</div><div class="s">${sub}</div></div>
         <div class="r"><div class="amt num ${r.a > 0 ? 'pos' : ''}">${plus(r.a)}</div>${r.run != null ? `<div class="s num">${fmt(r.run)}</div>` : ''}</div></div>`;
     }
@@ -214,7 +237,7 @@
       <div class="cf-top"><div><div class="l">Frei verfügbar</div><div class="big num ${sign(r.frei)}">${fmt(r.frei)}</div></div>
       <span class="chip-d ${r.veraenderung > 0.004 ? 'up' : r.veraenderung < -0.004 ? 'down' : ''}">${r.veraenderung > 0.004 ? '▲' : r.veraenderung < -0.004 ? '▼' : '•'} ${plus(r.veraenderung)}</span></div>
       <div class="cf-cols"><div>${UI.icon({ color: '#16a34a', icon: 'in' }, 'xs')}<span class="l">Einnahmen</span><b class="num">${fmt(r.einnahmen)}</b><small>Gehalt ${fmt(r.gehalt)}${r.weitere ? ` · weitere ${fmt(r.weitere)}` : ''}${r.sonder ? ` · Sonder ${fmt(r.sonder)}` : ''}</small></div>
-      <div>${UI.icon({ color: '#e5484d', icon: 'card' }, 'xs')}<span class="l">Ausgaben</span><b class="num">${fmt(r.ausgaben)}</b><small>davon Raten ${fmt(r.raten)}</small></div></div>
+      <div>${UI.icon({ color: '#e5484d', icon: 'card' }, 'xs')}<span class="l">Ausgaben</span><b class="num">${fmt(r.ausgaben)}</b><small>davon Raten ${fmt(r.raten)}${r.zinsen ? ` · Zinsen ${fmt(r.zinsen)}` : ''}</small></div></div>
       <div class="cf-bar"><i style="width:${(quote * 100).toFixed(1)}%"></i></div><div class="cf-bl"><span>${pct(quote)} der Einnahmen verplant</span><span>${r.kontoVorGehalt != null ? 'Konto vor Gehalt ' + fmt(r.kontoVorGehalt) : ''}</span></div>
     </section>`;
     if (r.ereignisse.length) out += `<div class="events">${r.ereignisse.map((e) => `<div class="banner good" style="margin:0">${UI.svg('star', 'class="bi"')}<span>${h(e)}</span></div>`).join('')}</div>`;
@@ -226,7 +249,7 @@
       <div class="ch-foot">${fms(win[0].m)} – ${fms(win[win.length - 1].m)} · Säule antippen zum Wechseln</div></div>`;
 
     // Donut nach Kategorie
-    const posten = E.monatsPosten(C.P, m);
+    const posten = E.monatsPosten(C.P, m, r);
     const byCat = {};
     for (const p of posten) byCat[p.kat] = (byCat[p.kat] || 0) + p.betrag;
     const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
@@ -307,7 +330,7 @@
       out += `<section class="card pad sumcard"><div class="l">Fixkosten pro Monat (Ø)</div><div class="big num">${fmt(sumFix)}</div>
         ${UI.stack(cats.map(([k, v]) => ({ v, color: UI.catColor(k) })))}
         <div class="lg-chips">${cats.map(([k, v]) => `<span><i style="background:${UI.catColor(k)}"></i>${h(k)} <b class="num">${fmt(v)}</b></span>`).join('')}</div>
-        <div class="sum-sub"><span>+ Budgets</span><b class="num">${fmt(sumVar)}</b><span>+ Raten</span><b class="num">${fmt(C.P.raten.filter((r) => r.offen > 0).reduce((a, r) => a + num(r.rate), 0))}</b></div></section>`;
+        <div class="sum-sub"><span>+ Budgets</span><b class="num">${fmt(sumVar)}</b><span>+ Raten</span><b class="num">${fmt(C.P.raten.filter((r) => r.offen > 0).reduce((a, r) => a + num(r.rate), 0))}</b>${C.zins.satz > 0 ? `<span>+ Zinsen Ø</span><b class="num">${fmt(C.zins.proMonat)}</b>` : ''}</div></section>`;
       const groups = [
         ['Fixkosten · Girokonto', (k) => k.typ === 'Fixkosten' && k.ueber === 'Girokonto'],
         ['Über Sparkonto (Rücklagen-Topf)', (k) => k.typ === 'Fixkosten' && k.ueber !== 'Girokonto'],
@@ -453,7 +476,8 @@
     return backTop('Einstellungen') + `<div class="card">
       ${item('dispo', 'bank', '#e5484d', 'Dispo-Rahmen', fmt(num(k.dispo)))}
       ${item('gehaltstag', 'briefcase', '#0ea5e9', 'Gehaltseingang am', `${k.gehaltstag}.`)}
-      ${item('puffer', 'shield', '#1fa36a', 'Sicherheitspuffer', fmt(num(k.puffer)))}</div><div class="foot">Gehaltstag: fällt er aufs Wochenende/Feiertag, zählt der Werktag davor. Der Puffer bleibt immer unangetastet.</div>
+      ${item('puffer', 'shield', '#1fa36a', 'Sicherheitspuffer', fmt(num(k.puffer)))}
+      ${item('dispoZins', 'bank', '#9f1239', 'Dispozins', `${String(num(k.dispoZins)).replace('.', ',')} % p. a.`)}</div><div class="foot">Gehaltstag: fällt er aufs Wochenende/Feiertag, zählt der Werktag davor. Der Puffer bleibt immer unangetastet.</div>
       <h2>Planung</h2><div class="card">
       ${item('planStart', 'calendar', '#5b6cf0', 'Planungsstart', fm(som(D(S.planStart))))}
       ${item('topfStart', 'vault', '#8b5cf6', 'Topf-Startbestand', fmt(num(S.topfStart)))}
@@ -520,6 +544,7 @@
     const id = 'f_' + k;
     const wrap = (inner, cls = '') => `<div class="field ${cls}" data-field="${k}"><label for="${id}">${label}</label>${inner}</div>`;
     switch (type) {
+      case 'rate': return wrap(`<input id="${id}" name="${k}" inputmode="decimal" placeholder="0,000" value="${h(moneyIn(val))}" autocomplete="off">`);
       case 'money': return wrap(`<input id="${id}" name="${k}" inputmode="decimal" placeholder="0,00" value="${h(moneyIn(val))}" autocomplete="off">`);
       case 'int': return wrap(`<input id="${id}" name="${k}" inputmode="numeric" pattern="[0-9]*" placeholder="${h(opt || '')}" value="${h(val ?? '')}">`);
       case 'date': return wrap(`<input id="${id}" name="${k}" type="date" value="${h(val || '')}">`);
@@ -540,6 +565,7 @@
     const v = el.value;
     switch (type) {
       case 'money': return parseMoney(v);
+      case 'rate': { const x = parseFloat(String(v).replace(/\s|%/g, '').replace(',', '.')); return isNaN(x) ? null : x; }
       case 'int': return v === '' ? null : parseInt(v, 10);
       case 'date': return v || null;
       case 'month': return v ? v + '-01' : null;
@@ -631,11 +657,26 @@
     const a = $('#amt'); a.focus(); a.select();
   }
 
+  // Tatsächliche Dispozinsen einer Abrechnung
+  function openZins(key, betrag) {
+    const cur = (S.zinsIst || {})[key];
+    const body = `<form id="frm"><div class="amount"><span>−</span><input id="amt" inputmode="decimal" value="${h(moneyIn(cur != null ? cur : Math.round(betrag * 100) / 100))}"><span>€</span></div>
+      <div class="hint">${cur != null ? 'Tatsächlicher Betrag laut Bank ist eingetragen.' : `Geschätzt: ${fmt(betrag)}. Trag hier den Betrag aus der Kontoabrechnung ein – die Schätzung wird dann ersetzt.`}</div>
+      ${cur != null ? `<button type="button" class="btn danger" data-act="zins-reset" data-key="${key}">Wieder schätzen lassen</button>` : ''}</form>`;
+    openSheet('Dispozinsen ' + fd(D(key)), body, () => {
+      const v = parseMoney($('#amt').value);
+      if (v == null) { toast('Bitte Betrag eingeben'); return false; }
+      const snap = snapshot(); S.zinsIst = { ...(S.zinsIst || {}), [key]: Math.abs(v) }; commit('Dispozinsen gespeichert', restoreFn(snap));
+    });
+    const a = $('#amt'); a.focus(); a.select();
+  }
+
   // Einzelne Einstellung
   function openEinstellung(f) {
     const defs = {
       dispo: ['Dispo-Rahmen', 'money', S.konto.dispo, (v) => (S.konto.dispo = v || 0)],
       puffer: ['Sicherheitspuffer', 'money', S.konto.puffer, (v) => (S.konto.puffer = v || 0)],
+      dispoZins: ['Dispozins (% p. a.)', 'rate', S.konto.dispoZins, (v) => (S.konto.dispoZins = v || 0)],
       gehaltstag: ['Gehaltseingang am (Tag)', 'int', S.konto.gehaltstag, (v) => (S.konto.gehaltstag = Math.max(1, Math.min(31, v || 1)))],
       planStart: ['Planungsstart', 'month', S.planStart, (v) => v && (S.planStart = v)],
       topfStart: ['Topf-Startbestand', 'money', S.topfStart, (v) => (S.topfStart = v || 0)],
@@ -675,7 +716,7 @@
     try { s = JSON.parse(txt); } catch { toast('Keine gültige Sicherungsdatei'); return; }
     if (!s || !s.konto || !Array.isArray(s.kosten)) { toast('Datei enthält keine Mtl.-Kosten-Daten'); return; }
     if (S && !confirm('Aktuelle Daten durch die Sicherung ersetzen?')) return;
-    S = normalize(s); ui.tab = 'jetzt'; ui.mehr = null; persist(); render(); toast('Daten importiert');
+    S = migrate(normalize(s)); ui.tab = 'jetzt'; ui.mehr = null; persist(); render(); toast('Daten importiert');
   }
   function pickFile() {
     const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json,text/plain';
@@ -728,6 +769,8 @@
       case 'save': return doSave();
       case 'undo': if (toastUndo) { toastUndo(); toastUndo = null; $('#toast').classList.remove('on'); } return;
       case 'edit': return openForm(el.dataset.ent, el.dataset.id);
+      case 'zins': return openZins(el.dataset.key, +el.dataset.b);
+      case 'zins-reset': { const snap = snapshot(); delete S.zinsIst[el.dataset.key]; closeSheet(); commit('Schätzung aktiv', restoreFn(snap)); return; }
       case 'new': return openForm(el.dataset.ent);
       case 'delete': {
         const { ent, id } = el.dataset;
@@ -770,6 +813,7 @@
     .map(([k, l]) => (k === 'add' ? `<button class="add" data-tab="add" aria-label="Ausgabe erfassen"><span>${I.add}</span></button>` : `<button data-tab="${k}">${I[k]}<span>${l}</span></button>`)).join('');
 
   render();
+  if (migrationMsg) toast(migrationMsg);
 
   // Offline-Fähigkeit & dauerhafter Speicher
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {

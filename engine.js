@@ -116,8 +116,29 @@
     return { m, gehalt, weitere, sonder, einnahmen, fix, raten, ruecklage, variabel, sparkonto, ausgaben, frei: einnahmen - ausgaben };
   }
 
+  // Abbuchungen/Eingänge (Kosten Giro, Raten, Einnahmen) im Zeitraum [ZStart, ZEnde) – Formel 'Konto jetzt'!B29
+  function zyklusEvents(P, ZStart, ZEnde) {
+    const m1 = eomonth(ZStart, -1) + 1, m2 = edate(m1, 1);
+    const reg = [];
+    const push = (nd, name, a, src, obj) => {
+      const d = nextWorkday(nd);
+      if (a !== 0 && d >= ZStart && d < ZEnde) reg.push({ d, nd, name, a, src, kat: obj.kat || null, ref: obj.id, verschoben: d !== nd });
+    };
+    for (const m of [m1, m2]) for (const x of P.kosten) {
+      if (x.ueber !== 'Girokonto' || x.typ === 'Variabel') continue;
+      push(dayIn(m, num(x.tag) || 1), x.bez, -kostenIm(x, m), 'kosten', x);
+    }
+    for (const m of [m1, m2]) for (const r of P.raten) {
+      if (r.erste == null) continue;
+      const rd = dayIn(m, ymd(D(r.naechste)).d);
+      push(rd, r.bez, -(num(r.rate) * (rd >= r.erste && rd <= r.letzte ? 1 : 0)), 'rate', r);
+    }
+    for (const m of [m1, m2]) for (const x of P.einnahmen) push(dayIn(m, num(x.tag) || 1), x.bez, einnIm(x, m), 'einnahme', x);
+    return reg;
+  }
+
   // ---------- Konto jetzt ----------
-  function kontoJetzt(s, P, today) {
+  function kontoJetzt(s, P, today, extra = []) {
     const k = s.konto || {};
     const KStand = num(k.stand), KDatum = D(k.datum) ?? today, KDispo = num(k.dispo), KPuffer = num(k.puffer);
     const tag = Math.max(1, Math.min(31, num(k.gehaltstag) || 1));
@@ -143,24 +164,10 @@
       : budgetListe.reduce((a, x) => a + Math.max(0, x.rest), 0);
     const KBudgetTag = KBudgetRest / Math.max(1, ZEnde - KDatum);
 
-    // Register der Buchungen im Zyklus (Formel in 'Konto jetzt'!B29)
-    const m1 = eomonth(ZStart, -1) + 1, m2 = edate(m1, 1);
-    const reg = [];
-    const push = (nd, name, a, src, obj) => {
-      const d = nextWorkday(nd);
-      reg.push({ d, nd, name, a, src, kat: obj.kat || null, ref: obj.id, status: d <= KDatum ? 'erledigt' : 'offen', verschoben: d !== nd, ok: a !== 0 && d >= ZStart && d < ZEnde });
-    };
-    for (const m of [m1, m2]) for (const x of P.kosten) {
-      if (x.ueber !== 'Girokonto' || x.typ === 'Variabel') continue;
-      push(dayIn(m, num(x.tag) || 1), x.bez, -kostenIm(x, m), 'kosten', x);
-    }
-    for (const m of [m1, m2]) for (const r of P.raten) {
-      if (r.erste == null) continue;
-      const rd = dayIn(m, ymd(D(r.naechste)).d);
-      push(rd, r.bez, -(num(r.rate) * (rd >= r.erste && rd <= r.letzte ? 1 : 0)), 'rate', r);
-    }
-    for (const m of [m1, m2]) for (const x of P.einnahmen) push(dayIn(m, num(x.tag) || 1), x.bez, einnIm(x, m), 'einnahme', x);
-    const rows = reg.filter((r) => r.ok);
+    // Register der Buchungen im Zyklus
+    const rows = zyklusEvents(P, ZStart, ZEnde);
+    for (const z of extra) if (z.d >= ZStart && z.d < ZEnde) rows.push({ ...z });
+    for (const r of rows) r.status = r.d <= KDatum ? 'erledigt' : 'offen';
     for (const b of buchungen) {
       if (!num(b.betrag) || b.gebucht || b.dN < KDatum) continue;
       rows.push({ d: b.dN, nd: b.dN, name: b.bez || (b.kat ? (budgets.find((x) => x.id === b.kat) || {}).bez : '') || 'vorgemerkt', a: -num(b.betrag), src: 'buchung', id: b.id, kat: b.kat || null, status: 'vorgemerkt', verschoben: false });
@@ -191,19 +198,43 @@
     };
   }
 
-  // ---------- Gesamtberechnung ----------
-  function compute(s, today = todayNum()) {
-    const P = prepare(s, today);
-    const K = kontoJetzt(s, P, today);
+  // ---------- Monatsplanung inkl. Dispozinsen ----------
+  // Dispozinsen: taggenau auf den geschätzten Ø-Kontostand je Gehaltszyklus, Abbuchung am letzten Werktag
+  // jedes Quartals (zählt damit zum Gehaltszyklus des Folgemonats).
+  function projection(s, P, K, rate, today) {
+    const sal = (m) => prevWorkday(dayIn(m, K.gehaltstag));
     const planStart = som(D(s.planStart) ?? today);
     const plan = [];
     for (let i = 0; i < 96; i++) plan.push(planMonth(P, edate(planStart, i)));
     const m0 = som(K.ZStart + 15);
+    // Ø-Kontostand eines Zyklus liegt um diesen Betrag über dem Tiefpunkt vor dem Gehalt
+    const offset = (m, variabel) => {
+      const s0 = sal(edate(m, -1)), e0 = sal(m), len = Math.max(1, e0 - s0);
+      return zyklusEvents(P, s0, e0).reduce((a, r) => a + (-r.a * (r.d - s0)) / len, 0) + variabel / 2;
+    };
+    const kvg0 = K.KVorGehalt - K.KBudgetRest;
+    const avg0 = rate > 0 ? kvg0 + offset(m0, planMonth(P, m0).variabel) : 0;
+    const accr = (avg, m) => (rate * Math.max(0, -avg) * dim(ymd(m).y, ymd(m).m)) / 365;
+    const accrual = new Map();
+    const getAcc = (m) => (accrual.has(m) ? accrual.get(m) : accr(avg0, m));   // Vergangenheit: Schätzung wie aktueller Zyklus
+    const quartal = (qm) => [0, 1, 2].reduce((a, k) => a + getAcc(edate(qm, -k)), 0);
+    // Abbuchung eines Quartals: tatsächlicher Betrag laut Bank (falls eingetragen), sonst Schätzung
+    const ist = s.zinsIst || {};
+    const charge = (qm) => { const d = prevWorkday(eomonth(qm, 0)), o = ist[iso(d)]; return { d, betrag: o != null ? num(o) : quartal(qm), ist: o != null }; };
+
     let cum = 0;
     plan.forEach((r, i) => {
+      const qm = edate(r.m, -1);
+      r.zinsen = 0;
+      if (rate > 0 && ymd(qm).m % 3 === 0) {
+        const c = charge(qm); r.zinsen = c.betrag; r.zinsDatum = c.d; r.zinsIst = c.ist; r.zinsQuartal = ymd(qm).m / 3;
+        r.ausgaben += r.zinsen; r.frei -= r.zinsen;
+      }
       r.veraenderung = i === 0 ? 0 : r.frei - plan[i - 1].frei;
       if (r.m > m0) cum += r.frei;
-      r.kontoVorGehalt = r.m < m0 ? null : K.KVorGehalt - K.KBudgetRest + cum;
+      r.kontoVorGehalt = r.m < m0 ? null : kvg0 + cum;
+      if (rate > 0 && r.m >= m0) accrual.set(r.m, r.m === m0 ? accr(avg0, r.m) : accr(r.kontoVorGehalt + offset(r.m, r.variabel), r.m));
+      r.zinsAufgelaufen = accrual.get(r.m) ?? null;
       const ev = [];
       if (i > 0 && r.gehalt !== plan[i - 1].gehalt) ev.push('Neues Netto: ' + fmt(r.gehalt));
       if (r.sonder > 0) ev.push('Sonderzahlung +' + fmt(r.sonder));
@@ -211,6 +242,29 @@
       for (const x of P.einnahmen) if (x.bis && eomonth(x.bis, 0) + 1 === r.m) ev.push(x.bez + ' endet (−' + fmt(num(x.betrag)) + ')');
       r.ereignisse = ev;
     });
+
+    // Zinsabbuchungen, die in den aktuellen Gehaltszyklus fallen
+    const zinsEvents = [];
+    if (rate > 0) for (let qm = edate(som(K.ZStart), -1); qm <= som(K.ZEnde); qm = edate(qm, 1)) {
+      if (ymd(qm).m % 3) continue;
+      const c = charge(qm);
+      if (c.d >= K.ZStart && c.d < K.ZEnde) zinsEvents.push({ d: c.d, nd: c.d, name: `Dispozinsen Q${ymd(qm).m / 3}`, a: -c.betrag, src: 'zins', ist: c.ist, zinsKey: iso(c.d), kat: 'Bank & Zinsen', verschoben: false });
+    }
+    const kommend = plan.filter((r) => r.m >= m0 && r.zinsAufgelaufen != null).slice(0, 12);
+    const naechste = plan.find((r) => r.zinsen > 0 && r.zinsDatum >= K.KDatum);
+    const zins = { satz: rate * 100, proMonat: kommend.length ? kommend.reduce((a, r) => a + r.zinsAufgelaufen, 0) / kommend.length : 0,
+      naechste: naechste ? { datum: naechste.zinsDatum, betrag: naechste.zinsen, quartal: naechste.zinsQuartal, ist: naechste.zinsIst } : null };
+    return { plan, zinsEvents, zins };
+  }
+
+  // ---------- Gesamtberechnung ----------
+  function compute(s, today = todayNum()) {
+    const P = prepare(s, today);
+    const rate = Math.max(0, num((s.konto || {}).dispoZins)) / 100;
+    let K = kontoJetzt(s, P, today);
+    let R = projection(s, P, K, rate, today);
+    for (let it = 0; it < 3 && rate > 0; it++) { K = kontoJetzt(s, P, today, R.zinsEvents); R = projection(s, P, K, rate, today); }
+    const plan = R.plan;
 
     // Ausblick 12 Monate (Formel 'Konto jetzt'!F25)
     const next12 = plan.filter((r) => r.kontoVorGehalt != null).slice(0, 12);
@@ -234,12 +288,13 @@
     });
     const topfMin = Math.min(...topf.slice(0, 12).map((x) => x.stand));
 
-    return { today, P, K, plan, ausblick, naechstesGehalt, topf: { bedarf: topfBedarf, noetig: topfNoetig, ist: topfIst, diff: topfIst - topfNoetig, min: topfMin, rows: topf } };
+    return { today, P, K, plan, ausblick, naechstesGehalt, zins: R.zins, topf: { bedarf: topfBedarf, noetig: topfNoetig, ist: topfIst, diff: topfIst - topfNoetig, min: topfMin, rows: topf } };
   }
 
   // Ausgabenliste eines Monats (Übersicht B13)
-  function monatsPosten(P, m) {
+  function monatsPosten(P, m, row) {
     const a = [];
+    if (row && row.zinsen > 0) { const z = ymd(row.zinsDatum); a.push({ bez: `Dispozinsen Q${row.zinsQuartal} (${String(z.d).padStart(2, '0')}.${String(z.m).padStart(2, '0')}., ${row.zinsIst ? 'laut Bank' : 'geschätzt'})`, kat: 'Bank & Zinsen', betrag: row.zinsen, typ: 'Zins' }); }
     for (const k of P.kosten) { const v = kostenIm(k, m) * (k.ueber === 'Girokonto' ? 1 : 0); if (v > 0) a.push({ bez: k.bez, kat: k.kat, betrag: v, typ: k.typ }); }
     for (const r of P.raten) { const v = rateIm(r, m); if (v > 0) a.push({ bez: r.bez, kat: 'Rate', betrag: v, typ: 'Rate' }); }
     return a.sort((x, y) => y.betrag - x.betrag);
